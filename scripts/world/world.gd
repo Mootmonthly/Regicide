@@ -13,6 +13,7 @@ var _tree_instances: Dictionary = {}
 var _stump_instances: Dictionary = {}
 var crown_nodes: Array[Crown] = []
 var hud: Hud
+var voice: VoiceChat
 ## Every standing building piece by its BuildGrid slot key (kept on every peer).
 var pieces: Dictionary = {}
 var ladders: Array[Structure] = []
@@ -44,6 +45,9 @@ func _ready() -> void:
 	player_spawner.spawn_function = _spawn_player
 	structure_spawner.spawn_function = _spawn_structure
 
+	voice = VoiceChat.new()
+	voice.name = "VoiceChat"
+	add_child(voice)
 	if not Net.is_dedicated():
 		hud = Hud.new()
 		add_child(hud)
@@ -370,6 +374,91 @@ func fx_arrow(from: Vector3, velocity: Vector3, duration: float) -> void:
 	t.tween_callback(arrow.queue_free)
 
 
+## Spell visuals: "frost" (bolt from -> to), "heal" (ring at from, radius = |to - from|),
+## "blink" (flash at both ends).
+@rpc("authority", "call_local", "unreliable")
+func fx_spell(kind: String, from: Vector3, to: Vector3) -> void:
+	if Net.is_dedicated():
+		return
+	match kind:
+		"frost":
+			var s := SphereMesh.new()
+			s.radius = 0.22
+			s.height = 0.44
+			_projectile(Visuals.mesh_instance(s, Color(0.6, 0.9, 1.0), Vector3.ZERO, 3.0), from, to, 45.0)
+			Sfx.play_at("frost", from)
+		"heal":
+			var radius := from.distance_to(to)
+			var ring := CylinderMesh.new()
+			ring.top_radius = radius
+			ring.bottom_radius = radius
+			ring.height = 0.1
+			var mat := Visuals.mat(Color(0.4, 1.0, 0.5, 0.5), 2.0).duplicate() as StandardMaterial3D
+			var mi := MeshInstance3D.new()
+			mi.mesh = ring
+			mi.material_override = mat
+			fx_root.add_child(mi)
+			mi.global_position = from + Vector3(0, 0.2, 0)
+			mi.scale = Vector3(0.1, 1, 0.1)
+			var t := mi.create_tween().set_parallel()
+			t.tween_property(mi, "scale", Vector3.ONE, 0.4)
+			t.tween_property(mat, "albedo_color:a", 0.0, 0.8)
+			t.chain().tween_callback(mi.queue_free)
+			Sfx.play_at("heal", from)
+		"blink":
+			for p in [from, to]:
+				debris(p, Color(0.75, 0.45, 1.0), 8)
+			Sfx.play_at("blink", from)
+			Sfx.play_at("blink", to)
+
+
+## A jagged lightning bolt through the given points.
+@rpc("authority", "call_local", "unreliable")
+func fx_lightning(points: Array) -> void:
+	if Net.is_dedicated() or points.size() < 2:
+		return
+	var holder := Node3D.new()
+	fx_root.add_child(holder)
+	for k in points.size() - 1:
+		var a: Vector3 = points[k]
+		var b: Vector3 = points[k + 1]
+		var prev := a
+		var segments := maxi(3, int(a.distance_to(b) / 2.5))
+		for n in segments:
+			var next := a.lerp(b, float(n + 1) / segments)
+			if n < segments - 1:
+				next += Vector3(randf_range(-0.9, 0.9), randf_range(-0.7, 0.7), randf_range(-0.9, 0.9))
+			var seg_len := prev.distance_to(next)
+			var m := BoxMesh.new()
+			m.size = Vector3(0.14, 0.14, seg_len)
+			var bolt := Visuals.mesh_instance(m, Color(0.7, 0.8, 1.0), Vector3.ZERO, 4.0)
+			bolt.cast_shadow = GeometryInstance3D.SHADOW_CASTING_SETTING_OFF
+			holder.add_child(bolt)
+			bolt.global_position = (prev + next) * 0.5
+			if seg_len > 0.01:
+				bolt.look_at(next)
+			prev = next
+	Sfx.play_at("lightning", points[0], 4.0)
+	var flash := OmniLight3D.new()
+	flash.light_color = Color(0.8, 0.85, 1.0)
+	flash.light_energy = 6.0
+	flash.omni_range = 12.0
+	holder.add_child(flash)
+	flash.global_position = points[1]
+	var t := holder.create_tween()
+	t.tween_interval(0.22)
+	t.tween_callback(holder.queue_free)
+
+
+## Clang of a blocked hit, or the bright ring of a parry.
+@rpc("authority", "call_local", "unreliable")
+func fx_block(pos: Vector3, parry: bool) -> void:
+	if Net.is_dedicated():
+		return
+	Sfx.play_at("parry" if parry else "block", pos, 2.0)
+	debris(pos, Color(1.0, 0.95, 0.6) if parry else Color(0.8, 0.8, 0.8), 6 if parry else 3)
+
+
 @rpc("authority", "call_local", "unreliable")
 func fx_repair(pos: Vector3) -> void:
 	if Net.is_dedicated():
@@ -469,6 +558,7 @@ func fx_fireball(from: Vector3, to: Vector3, radius: float) -> void:
 
 ## Moves a mesh from -> to and frees it. Returns the travel time.
 func _projectile(mi: MeshInstance3D, from: Vector3, to: Vector3, speed: float) -> float:
+	mi.cast_shadow = GeometryInstance3D.SHADOW_CASTING_SETTING_OFF
 	fx_root.add_child(mi)
 	mi.global_position = from
 	if from.distance_to(to) > 0.01:

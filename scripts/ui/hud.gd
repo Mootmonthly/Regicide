@@ -17,6 +17,9 @@ var _crowns: Label
 var _center: Label
 var _health: ProgressBar
 var _health_label: Label
+var _mana_bar: ProgressBar
+var _stamina_bar: ProgressBar
+var _voice_label: Label
 var _hotbar: HBoxContainer
 var _feed: VBoxContainer
 var _menu: PanelContainer
@@ -164,6 +167,15 @@ func _build() -> void:
 	_health_label.vertical_alignment = VERTICAL_ALIGNMENT_CENTER
 	health_row.add_child(_health_label)
 
+	_mana_bar = _thin_bar(bottom, Color(0.25, 0.45, 1.0))
+	_stamina_bar = _thin_bar(bottom, Color(0.95, 0.8, 0.25))
+
+	_voice_label = _label("", 15)
+	_voice_label.set_anchors_and_offsets_preset(Control.PRESET_CENTER_LEFT)
+	_voice_label.offset_left = 16
+	_voice_label.offset_top = 40
+	root.add_child(_voice_label)
+
 	_hotbar = HBoxContainer.new()
 	_hotbar.alignment = BoxContainer.ALIGNMENT_CENTER
 	_hotbar.add_theme_constant_override("separation", 4)
@@ -174,13 +186,28 @@ func _build() -> void:
 	bottom.add_child(_mode_label)
 	bottom.move_child(_mode_label, 1)
 
-	var help := _label("WASD move · Shift sprint · Space jump · LMB use · 1-0 / wheel select · Q build · E use · C craft & shop · Tab scores · Esc free mouse", 13)
+	var help := _label("WASD move · Shift sprint · LMB use · RMB block · 1-0 select · Q build · E use · C craft, spells & skills · T talk nearby · Y talk team · V camera · Tab scores", 13)
 	help.horizontal_alignment = HORIZONTAL_ALIGNMENT_CENTER
 	bottom.add_child(help)
 
 	_build_menu(root)
 	_build_scoreboard(root)
 	_rebuild_hotbar()
+
+
+func _thin_bar(parent: Control, color: Color) -> ProgressBar:
+	var bar := ProgressBar.new()
+	bar.custom_minimum_size = Vector2(360, 7)
+	bar.size_flags_horizontal = Control.SIZE_SHRINK_CENTER
+	bar.show_percentage = false
+	var fill := StyleBoxFlat.new()
+	fill.bg_color = color
+	bar.add_theme_stylebox_override("fill", fill)
+	var bg := StyleBoxFlat.new()
+	bg.bg_color = Color(0, 0, 0, 0.5)
+	bar.add_theme_stylebox_override("background", bg)
+	parent.add_child(bar)
+	return bar
 
 
 func _build_menu(root: Control) -> void:
@@ -329,10 +356,19 @@ func _process(_delta: float) -> void:
 		_health.max_value = me.max_health
 		_health.value = me.health
 		_health_label.text = "%d / %d" % [ceili(me.health), ceili(me.max_health)]
+		_mana_bar.max_value = me.max_mana
+		_mana_bar.value = me.mana
+		_stamina_bar.max_value = GameData.MAX_STAMINA
+		_stamina_bar.value = me.stamina
+		_voice_label.text = _voice_text()
 		if not me.alive:
 			_center.text = "You have fallen. Respawning..."
+		elif me.stunned:
+			_center.text = "Stunned!"
 		elif me.carrying_crown >= 0:
 			_center.text = "You carry the %s crown! Bring it to your pedestal." % GameData.team_name(me.carrying_crown)
+		elif me.slowed:
+			_center.text = "Slowed"
 		else:
 			_center.text = ""
 		if me.build_page != _hotbar_page:
@@ -340,6 +376,23 @@ func _process(_delta: float) -> void:
 		_mode_label.text = _mode_text(me)
 		for i in _hotbar.get_child_count():
 			_hotbar.get_child(i).modulate = Color.WHITE if i == me.hotbar_index else Color(1, 1, 1, 0.55)
+
+
+func _voice_text() -> String:
+	var voice := _world.voice
+	if voice == null:
+		return ""
+	var lines: PackedStringArray = []
+	if voice.talking == VoiceChat.Channel.PROXIMITY:
+		lines.append("● TALKING (nearby)")
+	elif voice.talking == VoiceChat.Channel.TEAM:
+		lines.append("● TALKING (team)")
+	for peer: int in voice.speaking:
+		var p := _world.get_player(peer)
+		if p:
+			var team_radio: bool = voice.speaking[peer][1] == VoiceChat.Channel.TEAM
+			lines.append("%s %s" % [p.display_name, "(team)" if team_radio else ""])
+	return "\n".join(lines)
 
 
 func _delta_time() -> float:
@@ -414,11 +467,15 @@ func _rebuild_hotbar() -> void:
 		var count := int(_game_mode.my_inventory.get(id, 0))
 		var key := str((i + 1) % 10) if i < 10 else ""
 		var text := "%s\n%s" % [key, GameData.display_name(id)]
+		var def := GameData.item(id)
 		if _hotbar_build_mode:
-			var recipe: Dictionary = GameData.item(id)["recipe"]
+			var recipe := GameData.build_cost(def["recipe"], _skill_rank("mason"))
 			text += "\n" + _short_cost(recipe)
 			if not _can_afford(recipe):
 				style.bg_color = Color(0.3, 0.05, 0.05, 0.75)
+		elif def.get("kind", "") == "spell":
+			text += "\n%d mana" % int(def["mana"])
+			style.bg_color = Color(0.08, 0.08, 0.2, 0.8)
 		elif count > 1:
 			text += " x%d" % count
 		var l := _label(text, 11 if _hotbar_build_mode else 12)
@@ -462,32 +519,53 @@ func _short_cost(recipe: Dictionary) -> String:
 	return " ".join(parts)
 
 
+const MENU_HEADINGS := {
+	"tool": "Tools", "weapon": "Weapons", "ranged": "Bows", "shield": "Shields (hold right click to block)",
+	"ammo": "Ammunition", "structure": "Building (Q to build; Q again for the next page)",
+	"consumable": "Potions & items", "spell": "Spells (learn once, cast with mana)",
+}
+
+
+func _skill_rank(skill: String) -> int:
+	return int(_game_mode.my_stats.get("skills", {}).get(skill, 0))
+
+
 func _rebuild_menu() -> void:
 	_menu_gold.text = "Gold: %d   " % _game_mode.my_gold
 	for c in _menu_list.get_children():
 		c.queue_free()
+	_add_skill_rows()
 	var last_kind := ""
 	for id: String in GameData.ITEMS:
 		var def := GameData.item(id)
 		var kind: String = def["kind"]
+		if kind == "structure" and def.get("category", "") == "":
+			continue  # summoned, not buildable
 		if kind != last_kind:
 			last_kind = kind
-			var heading := "Building (Q to build: Q again for the next page)" if kind == "structure" else kind.capitalize() + "s"
-			_menu_list.add_child(_label(heading, 20))
+			_menu_list.add_child(_label(MENU_HEADINGS.get(kind, kind.capitalize()), 20))
 		var row := HBoxContainer.new()
 		_menu_list.add_child(row)
 		var makes := (" (makes %d)" % def["yield"]) if def.has("yield") else ""
-		var have := ("  (have %d)" % int(_game_mode.my_inventory.get(id, 0))) if kind != "structure" else ""
-		var info := _label("%s%s\n%s\nCost: %s%s" % [def["name"], have, def.get("desc", ""), GameData.cost_text(def["recipe"]), makes], 14)
+		var have := ("  (have %d)" % int(_game_mode.my_inventory.get(id, 0))) if not kind in ["structure", "spell"] else ""
+		var cost_line := "Cost: %s%s" % [GameData.cost_text(def["recipe"]), makes]
+		if kind == "spell":
+			cost_line = "%d mana · %.1f s cooldown" % [int(def["mana"]), float(def["cooldown"])]
+		elif kind == "structure":
+			cost_line = "Cost: %s" % GameData.cost_text(GameData.build_cost(def["recipe"], _skill_rank("mason")))
+		var info := _label("%s%s\n%s\n%s" % [def["name"], have, def.get("desc", ""), cost_line], 14)
 		info.size_flags_horizontal = Control.SIZE_EXPAND_FILL
 		row.add_child(info)
 		var button := Button.new()
-		button.custom_minimum_size = Vector2(150, 0)
+		button.custom_minimum_size = Vector2(170, 0)
 		if kind == "structure" and _game_mode.is_unlocked_locally(id):
 			button.text = "Build mode (Q)"
 			button.disabled = true
 			button.tooltip_text = "Building pieces are placed from build mode and cost resources when placed."
-		elif _game_mode.is_unlocked_locally(id):
+		elif kind == "spell" and _game_mode.my_unlocks.has(id):
+			button.text = "Learned"
+			button.disabled = true
+		elif _game_mode.is_unlocked_locally(id) and kind != "spell":
 			button.text = "Craft"
 			button.disabled = not _can_afford(def["recipe"])
 			button.pressed.connect(func() -> void:
@@ -495,11 +573,40 @@ func _rebuild_menu() -> void:
 				_game_mode.request(&"request_craft", [id]))
 		else:
 			var cost: int = def["unlock_cost"]
-			button.text = "Unlock (%dg)" % cost
-			button.disabled = _game_mode.my_gold < cost
+			var materials := GameData.learn_materials(id)
+			var extra := (" + %s" % _short_cost(materials)) if not materials.is_empty() else ""
+			button.text = "%s (%dg%s)" % ["Learn" if kind == "spell" else "Unlock", cost, extra]
+			button.disabled = _game_mode.my_gold < cost or not _can_afford(materials)
 			button.pressed.connect(func() -> void:
 				Sfx.play("click")
 				_game_mode.request(&"request_unlock", [id]))
+		row.add_child(button)
+
+
+## Skills: spend points earned from kills (1) and captures (3). Rank n costs n points.
+func _add_skill_rows() -> void:
+	var points := int(_game_mode.my_stats.get("skill_points", 0))
+	_menu_list.add_child(_label("Skills — %d point%s to spend (kills give 1, captures 3)" % [points, "" if points == 1 else "s"], 20))
+	for skill: String in GameData.SKILLS:
+		var def: Dictionary = GameData.SKILLS[skill]
+		var rank := _skill_rank(skill)
+		var row := HBoxContainer.new()
+		_menu_list.add_child(row)
+		var info := _label("%s  (rank %d/%d)\n%s" % [def["name"], rank, def["max_rank"], def["desc"]], 14)
+		info.size_flags_horizontal = Control.SIZE_EXPAND_FILL
+		row.add_child(info)
+		var button := Button.new()
+		button.custom_minimum_size = Vector2(170, 0)
+		if rank >= int(def["max_rank"]):
+			button.text = "Maxed"
+			button.disabled = true
+		else:
+			var cost := GameData.skill_cost(rank)
+			button.text = "Rank up (%d pt%s)" % [cost, "" if cost == 1 else "s"]
+			button.disabled = points < cost
+			button.pressed.connect(func() -> void:
+				Sfx.play("click")
+				_game_mode.request(&"request_skill", [skill]))
 		row.add_child(button)
 
 

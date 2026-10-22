@@ -30,15 +30,15 @@ const LANE_X := 140.0  # the river fords
 
 ## [item, how many to keep] in priority order.
 const WISHLIST := {
-	Role.GATHERER: [["pickaxe", 1], ["stone_axe", 1], ["iron_sword", 1], ["skillbook_gatherer", 1],
+	Role.GATHERER: [["pickaxe", 1], ["stone_axe", 1], ["iron_sword", 1], ["wooden_shield", 1], ["skillbook_gatherer", 1],
 		["shortbow", 1], ["arrow", 10], ["health_potion", 1], ["skillbook_vigor", 1]],
-	Role.ATTACKER: [["pickaxe", 1], ["iron_sword", 1], ["horse_saddle", 1], ["health_potion", 2],
-		["war_hammer", 1], ["scroll_fireball", 1]],
+	Role.ATTACKER: [["pickaxe", 1], ["iron_sword", 1], ["wooden_shield", 1], ["horse_saddle", 1],
+		["health_potion", 2], ["war_hammer", 1]],
 	Role.DEFENDER: [["pickaxe", 1], ["shortbow", 1], ["arrow", 20], ["iron_sword", 1], ["crossbow", 1]],
 }
 const SHOPPING := {
 	Role.GATHERER: ["skillbook_gatherer", "health_potion", "skillbook_vigor"],
-	Role.ATTACKER: ["horse_saddle", "health_potion", "war_hammer", "scroll_fireball"],
+	Role.ATTACKER: ["horse_saddle", "health_potion", "war_hammer"],
 	Role.DEFENDER: ["ballista", "spike_trap", "health_potion", "crossbow"],
 }
 const MELEE_PREFERENCE := ["war_hammer", "iron_sword", "wooden_club", "stone_axe", "pickaxe"]
@@ -106,6 +106,8 @@ func _match_time() -> float:
 
 func _physics_process(delta: float) -> void:
 	player.wants_jump = false
+	if task != Task.FIGHT and player.blocking:
+		player.blocking = false
 	if not player.alive or gm.match_over:
 		player.move_input = Vector2.ZERO
 		task = Task.IDLE
@@ -343,6 +345,7 @@ static func build_plan(team: int, rec: PlayerRecord) -> Array:
 # =============================================================================
 
 func _manage_inventory(rec: PlayerRecord) -> void:
+	player.shield_item = rec.shield()
 	# Use consumables that should be used right away.
 	if gm.clock >= rec.next_action_time:
 		for id in ["skillbook_gatherer", "skillbook_vigor"]:
@@ -554,7 +557,13 @@ func _target_point() -> Vector3:
 
 func _act() -> void:
 	var rec := _rec()
-	if rec == null or gm.clock < rec.next_action_time:
+	if rec == null:
+		return
+	if gm.clock < rec.next_action_time:
+		# Between swings in a melee, hold the shield up.
+		var foe := target as Player if task == Task.FIGHT and is_instance_valid(target) else null
+		player.blocking = player.shield_item != "" and foe != null \
+			and GameData.flat_distance(player.sync_pos, foe.sync_pos) < 4.0
 		return
 	match task:
 		Task.GATHER:
@@ -620,6 +629,7 @@ func _fight(rec: PlayerRecord) -> void:
 			player.play_action_anim("ranged")
 		return
 	var weapon := _melee_weapon(rec)
+	player.blocking = false
 	if dist <= float(GameData.item(weapon)["range"]) + 0.3:
 		_use(weapon, foe.sync_pos - player.sync_pos)
 

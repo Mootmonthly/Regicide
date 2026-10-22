@@ -15,6 +15,9 @@ const KEYS := {
 	"rotate_piece": [KEY_R],
 	"repair": [KEY_F],
 	"upgrade": [KEY_G],
+	"camera_toggle": [KEY_V],
+	"voice_proximity": [KEY_T],
+	"voice_team": [KEY_Y],
 	"release_mouse": [KEY_ESCAPE],
 }
 
@@ -33,6 +36,7 @@ func _ready() -> void:
 		ev.physical_keycode = KEY_1 + i if i < 9 else KEY_0
 		InputMap.action_add_event(action, ev)
 	_mouse("primary", MOUSE_BUTTON_LEFT)
+	_mouse("block", MOUSE_BUTTON_RIGHT)
 	_mouse("next_slot", MOUSE_BUTTON_WHEEL_DOWN)
 	_mouse("prev_slot", MOUSE_BUTTON_WHEEL_UP)
 

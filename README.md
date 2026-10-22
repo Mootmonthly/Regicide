@@ -6,6 +6,8 @@ gather wood, stone, iron and magic ore, build forts on a snap grid, craft weapon
 fight to steal the enemy's crown and carry it back to their own. Siege engines, ladders,
 drawbridges and battlements make attacking and defending a base a real fight.
 
+![First person, sword and shield](docs/screenshots/first_person.png)
+
 ![The river narrows](docs/screenshots/river_narrows.png)
 
 ![A drawbridge lowered across the river](docs/screenshots/drawbridge.png)
@@ -35,16 +37,18 @@ The default port is **24565** (UDP). Open it on the host's router to play over t
 
 | Key | Action |
 | --- | --- |
-| WASD / Shift / Space | Move / sprint / jump |
-| Mouse | Look |
-| Left click | Swing, shoot, gather, place a structure, or use an item (whatever is equipped) |
+| WASD / Shift / Space | Move / sprint (uses stamina) / jump |
+| Mouse | Look (first person; V toggles third person) |
+| Left click | Swing, shoot, cast, gather, place a structure, or use an item (whatever is equipped) |
+| Right click (hold) | Raise your shield to block; raise it just as a blow lands to parry |
+| T (hold) / Y (hold) | Voice chat: nearby (positional) / your whole team |
 | 1–9, 0, mouse wheel | Pick a hotbar slot |
 | Q | Build mode; press again for the next page (walls → floors → siege → off) |
 | R (build mode) | Rotate the piece |
 | F / G (build mode) | Repair / upgrade-to-stone the piece you're aiming at |
 | E | Lower/raise your drawbridge, fire your catapult |
 | W / S on a ladder | Climb up / down |
-| C (or B) | Crafting & blueprint shop |
+| C (or B) | Crafting, blueprints, spells and skills |
 | Tab (hold) | Scoreboard |
 | Esc | Free the mouse |
 
@@ -67,7 +71,16 @@ The default port is **24565** (UDP). Open it on the host's router to play over t
 - **Earn gold.** Kills pay 50g; capturing a crown pays 250g to the carrier and 75g to
   every teammate; returning your own dropped crown pays 25g.
 - **Unlock.** Spend gold on blueprints: war hammer, crossbow, ballista, spike trap,
-  horse saddle, health potion, fireball scroll, and skillbooks.
+  catapult, battering ram, horse saddle, health potion, and skillbooks.
+- **Magic.** Learn spells with gold and magic ore — fireball, frost bolt (slows), chain
+  lightning, heal aura, blink, earth wall — and cast them with mana. Mana regenerates;
+  mana potions (brewed from magic ore) top it up.
+- **Shields.** Craft a wooden or iron shield and hold right click to block hits from the
+  front. Time it right as a sword lands to parry: no damage, and the attacker is stunned.
+- **Skills.** Kills earn 1 skill point and captures 3. Spend them on Toughness,
+  Swiftness, Arcane, Lumberjack, Mason (cheaper building) and Marksman.
+- **Voice chat.** Hold T to talk to everyone near you — positional 3D audio that fades
+  with distance, enemies included — or Y for your whole team.
 - **Steal the crown.** Touch the enemy crown to grab it. You move slower while carrying it,
   and drop it if you die. Bring it to your own pedestal **while your crown is home** to
   score. First to 3 captures wins, then a fresh match starts.

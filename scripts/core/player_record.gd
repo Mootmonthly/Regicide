@@ -15,6 +15,11 @@ var gather_mult := 1.0
 var bonus_health := 0.0
 var next_action_time := 0.0
 var protected_until := 0.0
+var skills: Dictionary = {}  ## skill id -> rank
+var skill_points := 0
+var spell_ready: Dictionary = {}  ## spell id -> game time it can be cast again
+var slow_until := 0.0
+var stun_until := 0.0
 ## Server speed check: last position we accepted and when.
 var last_valid_pos := Vector3.ZERO
 var last_move_check := 0.0
@@ -44,7 +49,35 @@ func reset_progress() -> void:
 	captures = 0
 	gather_mult = 1.0
 	bonus_health = 0.0
+	skills.clear()
+	skill_points = 0
+	spell_ready.clear()
+
+
+func rank(skill: String) -> int:
+	return int(skills.get(skill, 0))
+
+
+func max_health() -> float:
+	return GameData.PLAYER_MAX_HEALTH + bonus_health + 15.0 * rank("toughness")
+
+
+func max_mana() -> float:
+	return GameData.PLAYER_MAX_MANA + 25.0 * rank("arcane")
+
+
+func mana_regen() -> float:
+	return GameData.MANA_REGEN + 1.0 * rank("arcane")
+
+
+## Best shield in the inventory, or "".
+func shield() -> String:
+	for id in ["iron_shield", "wooden_shield"]:
+		if inventory.count(id) > 0:
+			return id
+	return ""
 
 
 func stats() -> Dictionary:
-	return {"kills": kills, "deaths": deaths, "captures": captures, "gather_mult": gather_mult}
+	return {"kills": kills, "deaths": deaths, "captures": captures, "gather_mult": gather_mult,
+		"skills": skills.duplicate(), "skill_points": skill_points}

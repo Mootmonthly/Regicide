@@ -104,6 +104,17 @@ func _build_sounds() -> void:
 		return (sin(TAU * 45.0 * t) * 0.9 + _noise() * 0.5) * _decay(t, 6.0), 0.3)
 	_streams["repair"] = _make(0.15, func(t: float, _d: float) -> float:
 		return (sin(TAU * 800.0 * t) * 0.4 + _noise() * 0.2) * _decay(t, 30.0))
+	_streams["frost"] = _make(0.35, func(t: float, _d: float) -> float:
+		return (sin(TAU * (1400.0 - 1800.0 * t) * t) * 0.3 + _noise() * 0.2) * _decay(t, 7.0))
+	_streams["lightning"] = _make(0.6, func(t: float, _d: float) -> float:
+		return (_noise() * 0.9 + _square(55.0, t) * 0.2) * _decay(t, 5.0), 0.6)
+	_streams["heal"] = _arpeggio([659.0, 880.0, 1175.0], 0.08)
+	_streams["blink"] = _make(0.25, func(t: float, d: float) -> float:
+		return sin(TAU * lerpf(300.0, 1600.0, t / d) * t) * 0.3 * _decay(t, 8.0))
+	_streams["block"] = _make(0.18, func(t: float, _d: float) -> float:
+		return (sin(TAU * 520.0 * t) * 0.4 + sin(TAU * 830.0 * t) * 0.3 + _noise() * 0.3) * _decay(t, 22.0))
+	_streams["parry"] = _make(0.5, func(t: float, _d: float) -> float:
+		return (sin(TAU * 1320.0 * t) + sin(TAU * 1980.0 * t) * 0.7 + sin(TAU * 2640.0 * t) * 0.4) * 0.3 * _decay(t, 6.0))
 	_streams["hitmarker"] = _make(0.05, func(t: float, _d: float) -> float:
 		return sin(TAU * 2200.0 * t) * 0.35 * _decay(t, 60.0))
 	_streams["click"] = _make(0.04, func(t: float, _d: float) -> float:

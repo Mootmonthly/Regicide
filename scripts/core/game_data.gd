@@ -23,6 +23,19 @@ const NO_BUILD_RADIUS := 6.0
 
 # --- Players -------------------------------------------------------------
 const PLAYER_MAX_HEALTH := 100.0
+const PLAYER_MAX_MANA := 100.0
+const MANA_REGEN := 2.5  ## per second
+const MAX_STAMINA := 100.0
+const SPRINT_STAMINA_COST := 18.0  ## per second
+const STAMINA_REGEN := 22.0  ## per second, after a short pause
+## Raise your shield this soon before a melee hit lands to parry it.
+const PARRY_WINDOW := 0.35
+const PARRY_STUN := 1.2
+const BLOCK_ARC := 1.3  ## radians either side of where you face
+const SLOW_MULT := 0.5
+## Skill points earned.
+const SKILL_POINTS_PER_KILL := 1
+const SKILL_POINTS_PER_CAPTURE := 3
 ## Fastest legit ground speed (sprinting on a horse), used by the server's speed check.
 const MAX_PLAYER_SPEED := 9.0 * 1.7
 const ARROW_GRAVITY := 9.8
@@ -121,6 +134,20 @@ const ITEMS := {
 		"structure_damage": 6.0,
 		"color": Color(0.3, 0.25, 0.22),
 		"desc": "Slow to reload, hits hard and flat. Needs arrows.",
+	},
+	"wooden_shield": {
+		"name": "Wooden Shield", "kind": "shield", "unlock_cost": 0,
+		"recipe": {"wood": 10},
+		"block": 0.6,
+		"color": Color(0.55, 0.38, 0.2),
+		"desc": "Hold right click to block 60% of a hit from the front. Raise it just as a sword lands to parry.",
+	},
+	"iron_shield": {
+		"name": "Iron Shield", "kind": "shield", "unlock_cost": 0,
+		"recipe": {"wood": 4, "iron": 8},
+		"block": 0.85,
+		"color": Color(0.62, 0.64, 0.7),
+		"desc": "Blocks 85% of a hit from the front. Your best shield is used automatically.",
 	},
 	"arrow": {
 		"name": "Arrows", "kind": "ammo", "unlock_cost": 0,
@@ -264,12 +291,12 @@ const ITEMS := {
 		"color": Color(0.45, 0.28, 0.12),
 		"desc": "Summon a horse: much faster until you die. No bonus while carrying a crown.",
 	},
-	"scroll_fireball": {
-		"name": "Scroll of Fireball", "kind": "consumable", "unlock_cost": 200,
-		"recipe": {"magic_ore": 3, "wood": 2},
-		"effect": "fireball", "damage": 45.0, "radius": 4.0, "structure_damage": 80.0, "range": 40.0,
-		"color": Color(1.0, 0.5, 0.1),
-		"desc": "Hurl an exploding fireball where you aim.",
+	"mana_potion": {
+		"name": "Mana Potion", "kind": "consumable", "unlock_cost": 0,
+		"recipe": {"magic_ore": 2, "wood": 1},
+		"effect": "mana", "amount": 60.0,
+		"color": Color(0.25, 0.45, 1.0),
+		"desc": "Restores 60 mana.",
 	},
 	"skillbook_vigor": {
 		"name": "Skillbook: Vigor", "kind": "consumable", "unlock_cost": 250,
@@ -285,9 +312,68 @@ const ITEMS := {
 		"color": Color(0.85, 0.75, 0.25),
 		"desc": "+50% resources from every hit for the rest of the match.",
 	},
+	# Spells: learned once (gold + magic ore, from the C menu), then cast with mana.
+	# They sit on your hotbar like items. "learn" is the magic ore paid to learn.
+	"fireball": {
+		"name": "Fireball", "kind": "spell", "unlock_cost": 150, "learn": {"magic_ore": 3}, "recipe": {},
+		"mana": 35.0, "cooldown": 1.2,
+		"damage": 45.0, "radius": 4.0, "structure_damage": 80.0, "range": 40.0,
+		"color": Color(1.0, 0.5, 0.1),
+		"desc": "An exploding fireball where you aim. Hurts structures too.",
+	},
+	"frost_bolt": {
+		"name": "Frost Bolt", "kind": "spell", "unlock_cost": 100, "learn": {"magic_ore": 2}, "recipe": {},
+		"mana": 20.0, "cooldown": 0.8,
+		"damage": 18.0, "range": 45.0, "slow": 3.0,
+		"color": Color(0.55, 0.85, 1.0),
+		"desc": "Chills the first enemy it hits: damage, and half speed for 3 s.",
+	},
+	"lightning": {
+		"name": "Lightning", "kind": "spell", "unlock_cost": 200, "learn": {"magic_ore": 4}, "recipe": {},
+		"mana": 40.0, "cooldown": 2.0,
+		"damage": 32.0, "range": 40.0, "chain_damage": 16.0, "chain_range": 8.0, "chains": 2,
+		"color": Color(0.85, 0.85, 1.0),
+		"desc": "Instant strike on the enemy you aim at, arcing to two more nearby.",
+	},
+	"heal_aura": {
+		"name": "Heal Aura", "kind": "spell", "unlock_cost": 150, "learn": {"magic_ore": 3}, "recipe": {},
+		"mana": 45.0, "cooldown": 4.0,
+		"heal": 35.0, "radius": 9.0,
+		"color": Color(0.4, 1.0, 0.5),
+		"desc": "Heals you and every teammate within 9 m by 35.",
+	},
+	"blink": {
+		"name": "Blink", "kind": "spell", "unlock_cost": 120, "learn": {"magic_ore": 2}, "recipe": {},
+		"mana": 30.0, "cooldown": 3.0, "range": 14.0,
+		"color": Color(0.75, 0.45, 1.0),
+		"desc": "Teleport up to 14 m the way you're looking (not through walls).",
+	},
+	"earth_wall": {
+		"name": "Earth Wall", "kind": "spell", "unlock_cost": 180, "learn": {"magic_ore": 4}, "recipe": {},
+		"mana": 50.0, "cooldown": 6.0, "lifetime": 15.0,
+		"color": Color(0.5, 0.4, 0.28),
+		"desc": "Raise a temporary stone wall in front of you for 15 s.",
+	},
+	# What Earth Wall summons (not buildable directly).
+	"earth_wall_piece": {
+		"name": "Earth Wall", "kind": "structure", "piece": "wall", "category": "", "unlock_cost": 0,
+		"recipe": {}, "health": 500.0, "thickness": 0.7,
+		"color": Color(0.5, 0.4, 0.28),
+		"desc": "Summoned by the Earth Wall spell. Crumbles after 15 s.",
+	},
 }
 
-const ITEM_KINDS := ["tool", "weapon", "ranged", "ammo", "structure", "consumable"]
+## Perks bought with skill points (earned from kills and captures). Rank n costs n points.
+const SKILLS := {
+	"toughness": {"name": "Toughness", "max_rank": 3, "desc": "+15 max health per rank."},
+	"swiftness": {"name": "Swiftness", "max_rank": 3, "desc": "+6% move speed per rank."},
+	"arcane": {"name": "Arcane", "max_rank": 3, "desc": "+25 max mana and +1 mana/s per rank."},
+	"lumberjack": {"name": "Lumberjack", "max_rank": 3, "desc": "+25% resources from every hit per rank."},
+	"mason": {"name": "Mason", "max_rank": 3, "desc": "Building pieces cost 15% less per rank."},
+	"marksman": {"name": "Marksman", "max_rank": 3, "desc": "+15% bow and crossbow damage per rank."},
+}
+
+const ITEM_KINDS := ["tool", "weapon", "ranged", "ammo", "shield", "structure", "consumable", "spell"]
 const MELEE_KINDS := ["fists", "tool", "weapon"]
 ## Build-mode pages, cycled with Q.
 const BUILD_CATEGORIES := ["walls", "floors", "siege"]
@@ -307,6 +393,23 @@ const BOT_NAMES := [
 ## Physics layer bit for a team's gates (layers 5 and 6). Enemies collide with them.
 static func gate_layer(team: int) -> int:
 	return 16 if team == 0 else 32
+
+
+## Learning cost for a spell / unlock cost for a blueprint: gold plus any materials.
+static func learn_materials(id: String) -> Dictionary:
+	return item(id).get("learn", {})
+
+
+static func skill_cost(rank_now: int) -> int:
+	return rank_now + 1
+
+
+## A building piece's price after the Mason skill discount.
+static func build_cost(recipe: Dictionary, mason_rank: int) -> Dictionary:
+	var out := {}
+	for res: String in recipe:
+		out[res] = maxi(1, ceili(int(recipe[res]) * (1.0 - 0.15 * mason_rank)))
+	return out
 
 
 static func item(id: String) -> Dictionary:

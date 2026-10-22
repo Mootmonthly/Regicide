@@ -140,6 +140,42 @@ siege the base of a tower to bring it down.
 Melee can only hit pieces at your height (you can't chop a second-storey wall from the
 ground — bring a ladder or stairs).
 
+## Combat
+
+- **First person** by default (V toggles an over-the-shoulder view, handy for building).
+- **Stamina:** sprinting drains it; it refills after a short rest.
+- **Shields:** Wooden (blocks 60%) and Iron (85%) — worn automatically, hold right click
+  to raise. Blocking halves your speed and stops you attacking, and only covers hits from
+  the front. **Parry:** raise the shield within 0.35 s of a melee blow — no damage, and
+  the attacker is stunned for 1.2 s (can't move or act).
+
+## Magic
+
+Spells are learned once per match (gold + magic ore, in the C menu) and sit on the hotbar.
+Casting costs mana (100 max, +2.5/s; mana potions restore 60).
+
+| Spell | Learn | Mana | Effect |
+| --- | --- | --- | --- |
+| Frost Bolt | 100g + 2 ore | 20 | 18 damage and half speed for 3 s |
+| Blink | 120g + 2 ore | 30 | Teleport up to 14 m (not through walls, not with a crown) |
+| Fireball | 150g + 3 ore | 35 | 45 damage explosion, hurts structures |
+| Heal Aura | 150g + 3 ore | 45 | Heals you and teammates within 9 m by 35 |
+| Earth Wall | 180g + 4 ore | 50 | Raises a stone wall in front of you for 15 s |
+| Lightning | 200g + 4 ore | 40 | 32 damage, arcs to 2 more enemies for 16 |
+
+## Skills
+
+Kills give 1 skill point, captures 3. Rank n of a skill costs n points (max rank 3).
+Toughness (+15 health), Swiftness (+6% speed), Arcane (+25 mana, +1 mana/s), Lumberjack
+(+25% gathering), Mason (-15% building cost), Marksman (+15% bow damage), per rank.
+Skills reset with the match.
+
+## Voice chat
+
+Push-to-talk. **T**: proximity — everyone within 45 m hears you from your position in 3D,
+fading with distance (so you can hear enemies sneaking up, and they can hear you).
+**Y**: team radio — your whole team, anywhere. A "talking" marker shows over speakers.
+
 ## Test bots
 
 Bots are a **testing tool** — real matches are people. They're off by default; "Test

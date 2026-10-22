@@ -42,6 +42,8 @@ var _target_pos := Vector3.ZERO
 var _target_yaw := 0.0
 var _has_target := false
 var _leaf_tween: Tween
+## Seconds until a summoned piece (Earth Wall) crumbles; 0 = permanent.
+var lifetime := 0.0
 
 
 func setup(data: Dictionary) -> void:
@@ -63,6 +65,7 @@ func setup(data: Dictionary) -> void:
 	_trap = def.get("trap", {})
 	_ram = def.get("ram", {})
 	_catapult = def.get("catapult", {})
+	lifetime = data.get("lifetime", 0.0)
 
 
 func is_door() -> bool:
@@ -162,6 +165,15 @@ func _ready() -> void:
 		world.pending_piece_states.erase(String(name))
 	if not Net.is_dedicated() and _game_mode and _game_mode.clock > 1.0:
 		Sfx.play_at("build", global_position)
+	if lifetime > 0.0:
+		# Summoned: rise out of the ground, crumble when time's up (server decides).
+		if not Net.is_dedicated():
+			scale.y = 0.05
+			create_tween().tween_property(self, "scale:y", 1.0, 0.35).set_trans(Tween.TRANS_BACK).set_ease(Tween.EASE_OUT)
+		if _game_mode and _game_mode.server_running:
+			get_tree().create_timer(lifetime, false, true).timeout.connect(func() -> void:
+				if is_instance_valid(self):
+					_game_mode.expire_structure(self))
 
 
 # --- Shape definitions (shared with the placement ghost) ------------------------------

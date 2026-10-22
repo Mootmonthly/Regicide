@@ -7,8 +7,8 @@ headless server or a host who also plays.
 
 | State | Owner | How it reaches others |
 | --- | --- | --- |
-| Player position, facing, equipped item | The player's own peer (server for bots) | `OwnerSync` (MultiplayerSynchronizer, 20 Hz) |
-| Health, alive, crown carried, mounted | Server | `ServerSync` (on change) |
+| Player position, facing, equipped item, shield raised | The player's own peer (server for bots) | `OwnerSync` (MultiplayerSynchronizer, 20 Hz) |
+| Health, mana, alive, crown carried, mounted, slowed, stunned | Server | `ServerSync` (on change; mana in 0.5 s steps) |
 | Inventory, gold, unlocks | Server | `GameMode._private` RPC to that player only |
 | Scores, crown states, scoreboard, match over | Server | `GameMode` broadcast RPCs |
 | Hit effects, arrows, structure damage | Server | Unreliable `World` RPCs; damage numbers come from the synced health change |
@@ -55,6 +55,21 @@ Drawbridges (open/closed) and battering rams (position) have state beyond their 
 data. Changes are broadcast (`World.piece_open`, `World.vehicle_pose`), and the welcome
 snapshot carries `World.piece_states()` for late joiners. Moving parts (drawbridge plank,
 catapult arm) live in a rotating "leaf" node whose collision moves with it.
+
+## Voice chat
+
+`VoiceChat` (a node under World) captures the microphone from a muted "Mic" bus
+(`AudioEffectCapture`), mixes to mono, resamples to 16 kHz and mu-law encodes to 8 bits
+(~16 KB/s while talking). Packets go to the server on their own unreliable-ordered
+channel; the server relays them only to `recipients()` (players within 45 m, or the
+speaker's team). Listeners play each speaker through an `AudioStreamGenerator` in an
+`AudioStreamPlayer3D` on the speaker's character (proximity) or a 2D player (team).
+
+## Shields and parries
+
+Raising a shield is owner-synced (`blocking`). The server stamps when it saw the shield
+go up (`block_started`); a melee hit from the front within `PARRY_WINDOW` of that is
+parried, otherwise the shield's block fraction is applied.
 
 ## Bots
 

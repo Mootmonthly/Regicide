@@ -427,6 +427,145 @@ func _run() -> void:
 		await get_tree().physics_frame
 	check(enemy.health < before, "spike trap hurts enemies standing on it")
 
+	# --- Spells & mana ---
+	gm._respawn(ENEMY)
+	var erec: PlayerRecord = gm.records[ENEMY]
+	erec.protected_until = 0.0
+	me.health = me.max_health
+	_place(me, Vector3(-120, 0, 60), Vector3(-120, 0, 40))
+	enemy.teleport(Vector3(-120, 0, 45))
+	enemy.health = enemy.max_health
+	await _frames(3)
+	rec.gold = 1000
+	rec.inventory.add("magic_ore", 30)
+	gm.request_unlock("frost_bolt")
+	check(rec.unlocks.has("frost_bolt") and rec.gold == 900, "learn a spell with gold")
+	check(rec.inventory.count("magic_ore") == 28, "learning a spell costs magic ore too")
+	check(gm.hotbar_items().has("frost_bolt"), "learned spells show on the hotbar")
+	for sp in ["fireball", "lightning", "heal_aura", "blink", "earth_wall"]:
+		gm.request_unlock(sp)
+	var mana_before := me.mana
+	var to_enemy := (enemy.chest() - (me.sync_pos + Vector3(0, 1.5, 0))).normalized()
+	_ready_to_act(1)
+	check(gm.perform_primary(1, "frost_bolt", to_enemy, Vector3.ZERO), "cast frost bolt")
+	check(enemy.health < enemy.max_health and enemy.slowed, "frost bolt hurts and slows")
+	check(is_equal_approx(me.mana, mana_before - 20.0), "spells cost mana")
+	check(enemy.current_speed(false) < Player.WALK_SPEED, "slowed players move slower")
+	_ready_to_act(1)
+	check(not gm.perform_primary(1, "frost_bolt", to_enemy, Vector3.ZERO), "spells have their own cooldown")
+	me.mana = 5.0
+	rec.spell_ready.clear()
+	_ready_to_act(1)
+	check(not gm.perform_primary(1, "lightning", to_enemy, Vector3.ZERO), "can't cast without mana")
+	await _frames(70)
+	check(me.mana > 5.0, "mana regenerates")
+	await _frames(130)
+	check(not enemy.slowed, "the slow wears off")
+	# Lightning chains to a second enemy.
+	gm.records[ENEMY + 1] = PlayerRecord.new(ENEMY + 1, "Enemy2", 1)
+	world.player_spawner.spawn({"peer_id": ENEMY + 1, "team": 1, "name": "Enemy2", "pos": Vector3(-116, 0, 45)})
+	var enemy2 := world.get_player(ENEMY + 1)
+	await _frames(2)
+	me.mana = me.max_mana
+	var h1 := enemy.health
+	_ready_to_act(1)
+	check(gm.perform_primary(1, "lightning", (enemy.chest() - (me.sync_pos + Vector3(0, 1.5, 0))).normalized(), Vector3.ZERO), "cast lightning")
+	check(enemy.health < h1 and enemy2.health < enemy2.max_health, "lightning chains to a nearby enemy")
+	gm._remove_player(ENEMY + 1)
+	# Heal aura.
+	me.health = 30.0
+	rec.spell_ready.clear()
+	_ready_to_act(1)
+	gm.perform_primary(1, "heal_aura", Vector3.FORWARD, Vector3.ZERO)
+	check(is_equal_approx(me.health, 65.0), "heal aura heals 35")
+	# Blink.
+	me.mana = me.max_mana
+	var blink_from := me.position
+	_ready_to_act(1)
+	check(gm.perform_primary(1, "blink", Vector3(1, 0, 0), Vector3.ZERO), "cast blink")
+	await _frames(2)
+	check(me.position.x - blink_from.x > 10.0, "blink moves you about 14 m (%.1f)" % (me.position.x - blink_from.x))
+	# Earth wall rises, then crumbles.
+	_ready_to_act(1)
+	var walls_before := world.get_structures().size()
+	check(gm.perform_primary(1, "earth_wall", Vector3(0, 0, -1), Vector3.ZERO), "cast earth wall")
+	await _frames(2)
+	check(world.get_structures().size() == walls_before + 1, "an earth wall appears")
+	var summoned: Structure = world.get_structures()[-1]
+	check(summoned.item_id == "earth_wall_piece" and summoned.lifetime > 0.0, "it's a temporary wall")
+	gm.expire_structure(summoned)
+	await _frames(2)
+	check(world.get_structures().size() == walls_before, "and crumbles when its time is up")
+
+	# --- Shields: block and parry ---
+	erec.inventory.add("wooden_shield")
+	enemy.health = enemy.max_health
+	_place(me, Vector3(-120, 0, 50), Vector3(-120, 0, 48))
+	enemy.teleport(Vector3(-120, 0, 48))
+	enemy.sync_yaw = 0.0  # facing +Z? no: yaw 0 faces -Z; turn to face me (+Z)
+	enemy.sync_yaw = PI
+	enemy.rotation.y = PI
+	rec.inventory.add("iron_sword", 1)
+	enemy.blocking = true
+	await _frames(40)  # past the parry window
+	_ready_to_act(1)
+	gm.perform_primary(1, "iron_sword", Vector3(0, 0, -1), Vector3.ZERO)
+	var blocked_damage := enemy.max_health - enemy.health
+	check(is_equal_approx(blocked_damage, 30.0 * 0.4), "a wooden shield blocks 60%% from the front (took %.1f)" % blocked_damage)
+	enemy.blocking = false
+	await _frames(1)
+	enemy.blocking = true  # raised just as the blow lands
+	_ready_to_act(1)
+	var hp := enemy.health
+	gm.perform_primary(1, "iron_sword", Vector3(0, 0, -1), Vector3.ZERO)
+	check(is_equal_approx(enemy.health, hp), "a well-timed block parries all damage")
+	check(me.stunned, "parrying stuns the attacker")
+	_ready_to_act(1)
+	rec.next_action_time = 0.0
+	check(not gm.perform_primary(1, "iron_sword", Vector3(0, 0, -1), Vector3.ZERO), "stunned players can't attack")
+	check(me.current_speed(true) == 0.0, "stunned players can't move")
+	await _frames(80)
+	check(not me.stunned, "the stun wears off")
+	enemy.blocking = false
+	enemy.sync_yaw = 0.0  # back turned
+	enemy.rotation.y = 0.0
+	enemy.blocking = true
+	await _frames(40)
+	hp = enemy.health
+	_ready_to_act(1)
+	gm.perform_primary(1, "iron_sword", Vector3(0, 0, -1), Vector3.ZERO)
+	check(is_equal_approx(hp - enemy.health, 30.0), "shields don't help against hits from behind")
+	enemy.blocking = false
+
+	# --- Skills ---
+	rec.skill_points = 0
+	check(not gm.perform_skill(1, "toughness"), "skills cost points")
+	rec.skill_points = 3
+	var max_before := me.max_health
+	check(gm.perform_skill(1, "toughness"), "spend a point on Toughness")
+	check(is_equal_approx(me.max_health, max_before + 15.0), "Toughness raises max health right away")
+	check(gm.perform_skill(1, "toughness") and rec.skill_points == 0, "rank 2 costs 2 points")
+	var kills_points := rec.skill_points
+	enemy.health = 1.0
+	erec.protected_until = 0.0
+	_ready_to_act(1)
+	gm.perform_primary(1, "iron_sword", Vector3(0, 0, -1), Vector3.ZERO)
+	check(rec.skill_points == kills_points + GameData.SKILL_POINTS_PER_KILL, "kills earn skill points")
+
+	# --- Voice chat routing ---
+	gm._respawn(ENEMY)
+	enemy.teleport(me.position + Vector3(0, 0, -10))
+	await _frames(2)
+	var near := world.voice.recipients(1, VoiceChat.Channel.PROXIMITY)
+	check(near.has(ENEMY), "proximity chat reaches players nearby (even enemies)")
+	enemy.teleport(me.position + Vector3(0, 0, -120))
+	await _frames(2)
+	check(not world.voice.recipients(1, VoiceChat.Channel.PROXIMITY).has(ENEMY), "but not players far away")
+	check(not world.voice.recipients(1, VoiceChat.Channel.TEAM).has(ENEMY), "team radio skips the other team")
+	check(not world.voice.recipients(1, VoiceChat.Channel.PROXIMITY).has(1), "you don't hear yourself")
+	world.voice._voice_down(ENEMY, VoiceChat.encode(PackedFloat32Array([0.1, 0.2])), VoiceChat.Channel.PROXIMITY)
+	check(world.voice.speaking.has(ENEMY), "incoming voice marks the speaker as talking")
+
 	# --- Speed check ---
 	_place(me, Vector3(0, 0, 0), Vector3(0, 0, 10))
 	gm._teleport_player(1, Vector3(0, 0, 0))

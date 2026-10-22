@@ -14,6 +14,7 @@ func _ready() -> void:
 	_test_build_zones()
 	_test_build_grid()
 	_test_terrain()
+	_test_skills_and_voice()
 	print("%d checks, %d failures" % [_checks, _failures])
 	get_tree().quit(1 if _failures > 0 else 0)
 
@@ -62,12 +63,19 @@ func _test_game_data() -> void:
 				check(def.get("piece", "") in ["wall", "door", "half", "drawbridge", "floor", "stairs", "roof", "ladder", "free", "vehicle"], "%s has a piece type" % id)
 				check(float(def.get("health", 0)) > 0, "%s has health" % id)
 				check(not Structure.piece_boxes(id, 0).is_empty(), "%s has a shape" % id)
-				check(def.get("category", "") in GameData.BUILD_CATEGORIES, "%s has a build page" % id)
+				var summoned: bool = def.get("category", "") == "" and def["recipe"].is_empty()
+				check(summoned or def.get("category", "") in GameData.BUILD_CATEGORIES, "%s has a build page" % id)
 				if def.has("upgrade"):
 					var up: String = def["upgrade"]
 					check(GameData.item(up).get("piece") == def["piece"], "%s upgrades to the same kind of piece" % id)
 			"consumable":
 				check(def.has("effect"), "%s has an effect" % id)
+			"spell":
+				check(def.has("mana") and def.has("cooldown") and int(def["unlock_cost"]) > 0, "%s has mana, cooldown and a learning price" % id)
+				for res: String in GameData.learn_materials(id):
+					check(GameData.is_resource(res), "%s learning material %s exists" % [id, res])
+			"shield":
+				check(float(def.get("block", 0)) > 0.0 and float(def["block"]) < 1.0, "%s blocks part of a hit" % id)
 	check(GameData.item("").get("kind") == "fists", "empty id means fists")
 	check(GameData.item("nonsense").is_empty(), "unknown items are empty")
 	check(GameData.crown_pos(0).z > 0 and GameData.crown_pos(1).z < 0, "teams are on opposite ends")
@@ -230,3 +238,37 @@ func _test_build_grid() -> void:
 	check(G.supported_keys(tower).size() == 5, "a supported tower stands")
 	tower.erase(G.edge_key(0, 0, 0, 0))
 	check(G.supported_keys(tower).is_empty(), "remove its base and it all comes down")
+
+
+func _test_skills_and_voice() -> void:
+	var rec := PlayerRecord.new(1, "T", 0)
+	check(is_equal_approx(rec.max_health(), GameData.PLAYER_MAX_HEALTH), "base max health")
+	rec.skills["toughness"] = 2
+	rec.skills["arcane"] = 1
+	check(is_equal_approx(rec.max_health(), GameData.PLAYER_MAX_HEALTH + 30.0), "toughness adds health")
+	check(is_equal_approx(rec.max_mana(), GameData.PLAYER_MAX_MANA + 25.0), "arcane adds mana")
+	check(rec.mana_regen() > GameData.MANA_REGEN, "arcane speeds mana regen")
+	check(GameData.skill_cost(0) == 1 and GameData.skill_cost(2) == 3, "rank n costs n points")
+	var price := GameData.build_cost({"wood": 8, "iron": 1}, 2)
+	check(price["wood"] == 6 and price["iron"] == 1, "Mason discounts building, never below 1 (%s)" % price)
+	check(rec.shield() == "", "no shield to start")
+	rec.inventory.add("wooden_shield")
+	rec.inventory.add("iron_shield")
+	check(rec.shield() == "iron_shield", "the best shield is used")
+	rec.reset_progress()
+	check(rec.skills.is_empty() and rec.skill_points == 0, "skills reset with the match")
+	check(GameMode.hotbar_for({}, ["frost_bolt"], 0).has("frost_bolt"), "learned spells join the hotbar")
+	check(not GameMode.hotbar_for({"wooden_shield": 1}, [], 0).has("wooden_shield"), "shields are worn, not hotbar items")
+
+	# Voice codec: mu-law round trip keeps speech-level audio close.
+	var samples := PackedFloat32Array()
+	for i in 640:
+		samples.append(0.6 * sin(i * 0.07) + 0.05 * sin(i * 1.3))
+	var packed := VoiceChat.encode(samples)
+	check(packed.size() == 640, "one byte per sample")
+	var back := VoiceChat.decode(packed)
+	var worst := 0.0
+	for i in samples.size():
+		worst = maxf(worst, absf(back[i] - samples[i]))
+	check(worst < 0.03, "mu-law round trip is close (worst error %.4f)" % worst)
+	check(absf(VoiceChat.decode(VoiceChat.encode(PackedFloat32Array([0.0])))[0]) < 0.01, "silence stays silent")

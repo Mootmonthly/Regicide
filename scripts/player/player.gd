@@ -15,6 +15,8 @@ const MOUSE_SENSITIVITY := 0.0025
 const REMOTE_SMOOTHING := 15.0
 const CLIMB_SPEED := 4.0
 const WADE_MULT := 0.45
+const EYE_HEIGHT := 1.65
+const BODY_LAYER := 2  ## render layer for your own body, hidden from your first-person camera
 
 var peer_id := 1
 var team := 0
@@ -45,12 +47,37 @@ var alive := true:
 		visible = value
 		if is_node_ready() and was_alive and not value:
 			_on_death()
+var max_mana := GameData.PLAYER_MAX_MANA
+var mana := GameData.PLAYER_MAX_MANA
+var slowed := false
+var stunned := false
 var carrying_crown := -1
 var mounted := false:
 	set(value):
 		mounted = value
 		if is_node_ready():
 			_refresh_mount()
+
+# Replicated from the owning peer: shield raised (right mouse) and which shield.
+var blocking := false:
+	set(value):
+		if value and not blocking and _game_mode:
+			block_started = _game_mode.clock  # parry timing (used on the server)
+		blocking = value
+		if is_node_ready():
+			_refresh_shield()
+var shield_item := "":
+	set(value):
+		shield_item = value
+		if is_node_ready():
+			_refresh_shield()
+var block_started := -100.0
+
+## Sprint stamina (owner side).
+var stamina := GameData.MAX_STAMINA
+var _stamina_pause := 0.0
+## First person by default; V toggles an over-the-shoulder view.
+var third_person := false
 
 # Movement intent: read from the keyboard for humans, written by BotBrain for bots.
 var move_input := Vector2.ZERO
@@ -93,6 +120,14 @@ var _next_hint_time := 0.0
 var _next_action_time := 0.0
 var _swing_tween: Tween
 var _flash_tween: Tween
+var _arm: SpringArm3D
+var _viewmodel: Node3D
+var _vm_hand: Node3D
+var _vm_weapon: MeshInstance3D
+var _vm_shield: MeshInstance3D
+var _shield_mesh: MeshInstance3D
+var _spell_ready: Dictionary = {}
+var _speaking_label: Label3D
 
 static var _flash_material: StandardMaterial3D
 
@@ -146,15 +181,31 @@ func in_water() -> bool:
 
 
 func current_speed(sprinting: bool) -> float:
+	if stunned:
+		return 0.0
 	var speed := SPRINT_SPEED if sprinting else WALK_SPEED
+	var mult := 1.0
+	if blocking:
+		mult *= 0.5
+	if slowed:
+		mult *= GameData.SLOW_MULT
+	if is_local() and _game_mode:
+		var skills: Dictionary = _game_mode.my_stats.get("skills", {})
+		mult *= 1.0 + 0.06 * int(skills.get("swiftness", 0))
 	if in_water():
 		# Wading: no sprinting, and horses don't help.
-		return WALK_SPEED * WADE_MULT * (CROWN_CARRY_MULT if carrying_crown >= 0 else 1.0)
+		return WALK_SPEED * WADE_MULT * (CROWN_CARRY_MULT if carrying_crown >= 0 else 1.0) * mult
 	if carrying_crown >= 0:
-		return speed * CROWN_CARRY_MULT
+		return speed * CROWN_CARRY_MULT * mult
 	if mounted:
-		return speed * MOUNT_MULT
-	return speed
+		return speed * MOUNT_MULT * mult
+	return speed * mult
+
+
+## Show the "talking" marker over this player (voice chat).
+func set_speaking(on: bool) -> void:
+	if _speaking_label:
+		_speaking_label.visible = on
 
 
 func chest() -> Vector3:
@@ -188,10 +239,25 @@ func _owner_physics(delta: float) -> void:
 		move_input = Vector2.ZERO
 		wants_jump = false
 		wants_sprint = false
-		if controlling:
+		if controlling and not stunned:
 			move_input = Input.get_vector("move_left", "move_right", "move_forward", "move_back")
 			wants_jump = Input.is_action_just_pressed("jump")
 			wants_sprint = Input.is_action_pressed("sprint")
+		shield_item = _best_shield()
+		blocking = controlling and alive and not stunned and not build_mode and shield_item != "" \
+			and Input.is_action_pressed("block")
+	# Stamina: sprinting drains it; it refills after a short rest.
+	var sprinting := wants_sprint and move_input.length() > 0.1 and not blocking and not in_water()
+	if sprinting and stamina > 0.0:
+		stamina = maxf(stamina - GameData.SPRINT_STAMINA_COST * delta, 0.0)
+		_stamina_pause = 0.8
+	else:
+		sprinting = false
+		_stamina_pause -= delta
+		if _stamina_pause <= 0.0:
+			stamina = minf(stamina + GameData.STAMINA_REGEN * delta, GameData.MAX_STAMINA)
+	if stunned:
+		wants_jump = false
 	# Ladders: hold forward to climb, back to climb down.
 	on_ladder = _world != null and _world.ladder_at(position) != null
 	if on_ladder and (move_input.y < -0.1 or not is_on_floor()):
@@ -203,7 +269,7 @@ func _owner_physics(delta: float) -> void:
 	elif wants_jump:
 		velocity.y = JUMP_VELOCITY
 	var dir := (transform.basis * Vector3(move_input.x, 0.0, move_input.y)).normalized()
-	var speed := current_speed(wants_sprint)
+	var speed := current_speed(sprinting)
 	velocity.x = dir.x * speed
 	velocity.z = dir.z * speed
 	move_and_slide()
@@ -243,7 +309,10 @@ func _unhandled_input(event: InputEvent) -> void:
 	var captured := Input.mouse_mode == Input.MOUSE_MODE_CAPTURED
 	if event is InputEventMouseMotion and captured:
 		rotation.y -= event.relative.x * MOUSE_SENSITIVITY
-		_pivot.rotation.x = clampf(_pivot.rotation.x - event.relative.y * MOUSE_SENSITIVITY, -1.2, 0.9)
+		_pivot.rotation.x = clampf(_pivot.rotation.x - event.relative.y * MOUSE_SENSITIVITY, -1.45, 1.4)
+		return
+	if event.is_action_pressed("camera_toggle"):
+		set_third_person(not third_person)
 		return
 	if event.is_action_pressed("release_mouse"):
 		Input.mouse_mode = Input.MOUSE_MODE_VISIBLE
@@ -310,7 +379,7 @@ func select_slot(i: int) -> void:
 # --- Actions ---------------------------------------------------------------------
 
 func _try_primary() -> void:
-	if _game_mode.clock < _next_action_time:
+	if _game_mode.clock < _next_action_time or blocking or stunned:
 		return
 	var def := GameData.item(equipped)
 	if def.is_empty():
@@ -320,6 +389,13 @@ func _try_primary() -> void:
 	if kind == "structure":
 		_try_build(def)
 		return
+	if kind == "spell":
+		if _game_mode.clock < float(_spell_ready.get(equipped, 0.0)):
+			return
+		if mana < float(def["mana"]):
+			_hint("Not enough mana (%d needed)." % int(def["mana"]))
+			return
+		_spell_ready[equipped] = _game_mode.clock + float(def["cooldown"])
 	if kind == "ranged" and int(_game_mode.my_inventory.get(def["ammo"], 0)) <= 0:
 		_game_mode.message_received.emit("Out of arrows! Craft more in the menu (C).")
 		_next_action_time = _game_mode.clock + 1.0
@@ -331,9 +407,10 @@ func _try_primary() -> void:
 
 ## Plays the swing/shoot animation here and on every other peer.
 func play_action_anim(kind: String) -> void:
-	if kind in GameData.MELEE_KINDS or kind == "ranged":
-		_swing(kind == "ranged")
-		_remote_swing.rpc(kind == "ranged")
+	if kind in GameData.MELEE_KINDS or kind == "ranged" or kind == "spell":
+		var push := kind != "fists" and not kind in GameData.MELEE_KINDS
+		_swing(push, kind == "spell")
+		_remote_swing.rpc(push, kind == "spell")
 
 
 func aim_direction() -> Vector3:
@@ -383,25 +460,36 @@ func current_build_slot() -> Dictionary:
 
 
 @rpc("authority", "call_remote", "unreliable")
-func _remote_swing(ranged: bool) -> void:
-	_swing(ranged)
+func _remote_swing(push: bool, spell := false) -> void:
+	_swing(push, spell)
 
 
-func _swing(ranged: bool) -> void:
+## Swing (melee) or push forward (bow, spell). Animates the body's hand for everyone
+## and, for you, the first-person viewmodel.
+func _swing(push: bool, spell := false) -> void:
 	if Net.is_dedicated() or _body == null:
 		return
 	if _swing_tween:
 		_swing_tween.kill()
 	_hand.rotation.x = 0.0
-	_swing_tween = create_tween()
-	if ranged:
+	_swing_tween = create_tween().set_parallel()
+	if push:
 		_swing_tween.tween_property(_hand, "position:z", -0.05, 0.05)
-		_swing_tween.tween_property(_hand, "position:z", -0.15, 0.2)
-		Sfx.play_at("bow", global_position, -4.0)
+		_swing_tween.chain().tween_property(_hand, "position:z", -0.15, 0.2)
+		if not spell:
+			Sfx.play_at("bow", global_position, -4.0)
 	else:
 		_swing_tween.tween_property(_hand, "rotation:x", -1.5, 0.08)
-		_swing_tween.tween_property(_hand, "rotation:x", 0.0, 0.18)
+		_swing_tween.chain().tween_property(_hand, "rotation:x", 0.0, 0.18)
 		Sfx.play_at("swing", global_position, -6.0)
+	if _vm_hand:
+		var vm := create_tween()
+		if push:
+			vm.tween_property(_vm_hand, "position:z", -0.25, 0.06)
+			vm.tween_property(_vm_hand, "position:z", 0.0, 0.2)
+		else:
+			vm.tween_property(_vm_hand, "rotation:x", -1.2, 0.08)
+			vm.tween_property(_vm_hand, "rotation:x", 0.0, 0.2)
 
 
 # --- Feedback ----------------------------------------------------------------------
@@ -475,6 +563,8 @@ func _build_visuals() -> void:
 	_body.add_child(_hand)
 	_weapon = MeshInstance3D.new()
 	_hand.add_child(_weapon)
+	_shield_mesh = Visuals.box(Vector3(0.08, 0.8, 0.6), Color.WHITE)
+	_body.add_child(_shield_mesh)
 
 	var label := Label3D.new()
 	label.text = display_name
@@ -486,6 +576,16 @@ func _build_visuals() -> void:
 	label.position.y = 2.25
 	label.visible = not is_local()  # your own name would float in front of the camera
 	_body.add_child(label)
+	_speaking_label = Label3D.new()
+	_speaking_label.text = "((( talking )))"
+	_speaking_label.billboard = BaseMaterial3D.BILLBOARD_ENABLED
+	_speaking_label.font_size = 28
+	_speaking_label.pixel_size = 0.006
+	_speaking_label.outline_size = 6
+	_speaking_label.modulate = Color(0.6, 1.0, 0.6)
+	_speaking_label.position.y = 2.55
+	_speaking_label.visible = false
+	_body.add_child(_speaking_label)
 
 	_horse = Node3D.new()
 	_horse.add_child(Visuals.box(Vector3(0.9, 0.9, 2.0), Color(0.45, 0.3, 0.18), Vector3(0, 0.75, 0)))
@@ -494,7 +594,10 @@ func _build_visuals() -> void:
 
 	_refresh_weapon()
 	_refresh_mount()
+	_refresh_shield()
 	visible = alive
+	if is_local():
+		_set_layer(_body, BODY_LAYER)  # your own body is hidden in first person
 
 
 func _refresh_weapon() -> void:
@@ -502,8 +605,16 @@ func _refresh_weapon() -> void:
 		return
 	var def := GameData.item(equipped)
 	var kind: String = def.get("kind", "fists")
-	if kind == "fists":
+	if kind == "fists" or kind == "spell":
 		_weapon.visible = false
+		if _vm_weapon:
+			_vm_weapon.visible = kind == "spell"
+			if kind == "spell":
+				var orb := SphereMesh.new()
+				orb.radius = 0.06
+				orb.height = 0.12
+				_vm_weapon.mesh = orb
+				_vm_weapon.material_override = Visuals.mat(def.get("color", Color.WHITE), 0.8)
 		return
 	_weapon.visible = true
 	var m := BoxMesh.new()
@@ -523,6 +634,10 @@ func _refresh_weapon() -> void:
 			_weapon.position = Vector3(0, 0, -0.2)
 	_weapon.mesh = m
 	_weapon.material_override = Visuals.mat(def.get("color", Color.WHITE))
+	if _vm_weapon:
+		_vm_weapon.mesh = m
+		_vm_weapon.material_override = _weapon.material_override
+		_vm_weapon.visible = true
 
 
 func _refresh_mount() -> void:
@@ -534,19 +649,79 @@ func _refresh_mount() -> void:
 
 func _build_camera() -> void:
 	_pivot = Node3D.new()
-	_pivot.position = Vector3(0, 1.6, 0)
+	_pivot.position = Vector3(0, EYE_HEIGHT, 0)
 	add_child(_pivot)
-	var arm := SpringArm3D.new()
-	arm.spring_length = 4.0
-	arm.position = Vector3(0.7, 0.3, 0)
-	arm.collision_mask = 1 | 4
-	arm.add_excluded_object(get_rid())
-	_pivot.add_child(arm)
+	_arm = SpringArm3D.new()
+	_arm.collision_mask = 1 | 4
+	_arm.add_excluded_object(get_rid())
+	_pivot.add_child(_arm)
 	_camera = Camera3D.new()
-	_camera.fov = 75.0
+	_camera.fov = 80.0
+	_camera.near = 0.05
 	_camera.far = 700.0
-	arm.add_child(_camera)
+	_arm.add_child(_camera)
 	_camera.current = true
+	# First-person hands: weapon on the right, shield on the left.
+	_viewmodel = Node3D.new()
+	_camera.add_child(_viewmodel)
+	_vm_hand = Node3D.new()
+	_vm_hand.position = Vector3(0.26, -0.24, -0.5)
+	_vm_hand.scale = Vector3.ONE * 0.45  # weapon meshes are body-sized
+	_viewmodel.add_child(_vm_hand)
+	_vm_weapon = MeshInstance3D.new()
+	_vm_weapon.position = Vector3(0, 0, -0.25)
+	_vm_weapon.cast_shadow = GeometryInstance3D.SHADOW_CASTING_SETTING_OFF
+	_vm_hand.add_child(_vm_weapon)
+	_vm_shield = Visuals.box(Vector3(0.2, 0.27, 0.03), Color.WHITE)
+	_vm_shield.cast_shadow = GeometryInstance3D.SHADOW_CASTING_SETTING_OFF
+	_viewmodel.add_child(_vm_shield)
+	_refresh_weapon()
+	_refresh_shield()
+	set_third_person(false)
+
+
+func set_third_person(on: bool) -> void:
+	third_person = on
+	if _arm == null:
+		return
+	_arm.spring_length = 4.0 if on else 0.0
+	_arm.position = Vector3(0.7, 0.3, 0) if on else Vector3.ZERO
+	_viewmodel.visible = not on
+	if on:
+		_camera.cull_mask |= BODY_LAYER
+	else:
+		_camera.cull_mask &= ~BODY_LAYER
+
+
+func _set_layer(node: Node, layer: int) -> void:
+	if node is VisualInstance3D:
+		(node as VisualInstance3D).layers = layer
+	for c in node.get_children():
+		_set_layer(c, layer)
+
+
+func _best_shield() -> String:
+	if _game_mode == null:
+		return ""
+	for id in ["iron_shield", "wooden_shield"]:
+		if int(_game_mode.my_inventory.get(id, 0)) > 0:
+			return id
+	return ""
+
+
+## Shield on the left arm, swung in front when blocking.
+func _refresh_shield() -> void:
+	var color: Color = GameData.item(shield_item).get("color", Color.WHITE)
+	if _shield_mesh:
+		_shield_mesh.visible = shield_item != ""
+		_shield_mesh.material_override = Visuals.mat(color)
+		_shield_mesh.position = Vector3(-0.2, 1.3, -0.5) if blocking else Vector3(-0.48, 1.05, -0.05)
+		_shield_mesh.rotation.y = PI * 0.5 if blocking else 0.0
+	if _vm_shield:
+		_vm_shield.visible = shield_item != ""
+		_vm_shield.material_override = Visuals.mat(color)
+		_vm_shield.position = Vector3(-0.09, -0.1, -0.42) if blocking else Vector3(-0.32, -0.3, -0.55)
+		_vm_shield.rotation = Vector3.ZERO if blocking else Vector3(0.2, 0.5, 0.1)
 
 
 func _update_ghost() -> void:
@@ -577,7 +752,8 @@ func _update_ghost() -> void:
 	if _ghost_problem == "" and chest().distance_to(BuildGrid.center_of(kind, _ghost_slot)) > BuildGrid.REACH:
 		_ghost_problem = "Too far away."
 	if _ghost_problem == "":
-		var recipe: Dictionary = GameData.item(equipped)["recipe"]
+		var skills: Dictionary = _game_mode.my_stats.get("skills", {})
+		var recipe := GameData.build_cost(GameData.item(equipped)["recipe"], int(skills.get("mason", 0)))
 		for res: String in recipe:
 			if int(_game_mode.my_inventory.get(res, 0)) < int(recipe[res]):
 				_ghost_problem = "Not enough resources: needs %s." % GameData.cost_text(recipe)

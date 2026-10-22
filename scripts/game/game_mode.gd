@@ -373,7 +373,10 @@ static func hotbar_for(inventory: Dictionary, unlocks: Array, build_page := 0) -
 			if def["kind"] == "structure" and def.get("category", "") == category \
 					and (int(def["unlock_cost"]) <= 0 or unlocks.has(id)):
 				out.append(id)
-		elif def["kind"] != "ammo" and def["kind"] != "structure" and int(inventory.get(id, 0)) > 0:
+		elif def["kind"] == "spell":
+			if unlocks.has(id):
+				out.append(id)
+		elif not def["kind"] in ["ammo", "structure", "shield"] and int(inventory.get(id, 0)) > 0:
 			out.append(id)
 	return out
 
@@ -433,8 +436,9 @@ func perform_build(peer: int, item_id: String, slot: Dictionary) -> bool:
 	if problem != "":
 		_tell(peer, problem)
 		return false
-	if not rec.inventory.pay(def["recipe"]):
-		_tell(peer, "Not enough resources: %s needs %s." % [def["name"], GameData.cost_text(def["recipe"])])
+	var price := GameData.build_cost(def["recipe"], rec.rank("mason"))
+	if not rec.inventory.pay(price):
+		_tell(peer, "Not enough resources: %s needs %s." % [def["name"], GameData.cost_text(price)])
 		return false
 	rec.next_action_time = clock + BUILD_COOLDOWN
 	world.structure_spawner.spawn({
@@ -574,12 +578,18 @@ func perform_unlock(peer: int, item_id: String) -> bool:
 	if rec == null or not GameData.is_item(item_id) or rec.is_unlocked(item_id):
 		return false
 	var cost: int = GameData.item(item_id)["unlock_cost"]
+	var materials := GameData.learn_materials(item_id)
 	if rec.gold < cost:
 		_tell(peer, "You need %d gold." % cost)
 		return false
+	if not rec.inventory.has_all(materials):
+		_tell(peer, "Learning that also needs %s." % GameData.cost_text(materials))
+		return false
+	rec.inventory.pay(materials)
 	rec.gold -= cost
 	rec.unlocks[item_id] = true
-	_tell(peer, "Unlocked %s!" % GameData.display_name(item_id))
+	var verb := "Learned" if GameData.item(item_id)["kind"] == "spell" else "Unlocked"
+	_tell(peer, "%s %s!" % [verb, GameData.display_name(item_id)])
 	_push_private(peer)
 	return true
 
@@ -591,12 +601,17 @@ func perform_primary(peer: int, item_id: String, aim_dir: Vector3, target: Vecto
 	if rec == null:
 		return false
 	var p := world.get_player(peer)
-	if p == null or not p.alive:
-		return false
-	if item_id != "" and rec.inventory.count(item_id) <= 0:
+	if p == null or not p.alive or p.stunned or p.blocking:
 		return false
 	var def := GameData.item(item_id)
-	if def.is_empty() or clock < rec.next_action_time:
+	if def.is_empty():
+		return false
+	if def["kind"] == "spell":
+		if not rec.unlocks.has(item_id):
+			return false
+	elif item_id != "" and rec.inventory.count(item_id) <= 0:
+		return false
+	if clock < rec.next_action_time:
 		return false
 	# Small tolerance for network jitter.
 	rec.next_action_time = clock + float(def.get("cooldown", 1.0)) * 0.85
@@ -611,7 +626,194 @@ func perform_primary(peer: int, item_id: String, aim_dir: Vector3, target: Vecto
 		return _shoot(rec, p, def, aim_dir)
 	elif kind == "consumable":
 		return _use_consumable(rec, p, item_id, def, aim_dir)
+	elif kind == "spell":
+		return _cast_spell(rec, p, item_id, def, aim_dir)
 	return true
+
+
+## Spend a skill point (rank n costs n points).
+@rpc("any_peer", "call_local", "reliable")
+func request_skill(skill: String) -> void:
+	if server_running:
+		perform_skill(_sender(), skill)
+
+
+func perform_skill(peer: int, skill: String) -> bool:
+	var rec: PlayerRecord = records.get(peer)
+	if rec == null or not GameData.SKILLS.has(skill):
+		return false
+	var now := rec.rank(skill)
+	var cost := GameData.skill_cost(now)
+	if now >= int(GameData.SKILLS[skill]["max_rank"]) or rec.skill_points < cost:
+		return false
+	rec.skill_points -= cost
+	rec.skills[skill] = now + 1
+	var p := world.get_player(peer)
+	if p:
+		var gained := rec.max_health() - p.max_health
+		p.max_health = rec.max_health()
+		if p.alive and gained > 0.0:
+			p.health += gained
+		p.max_mana = rec.max_mana()
+	_tell(peer, "%s is now rank %d." % [GameData.SKILLS[skill]["name"], now + 1])
+	_push_private(peer)
+	return true
+
+
+# =============================================================================
+# Spells
+# =============================================================================
+
+func _cast_spell(rec: PlayerRecord, p: Player, id: String, def: Dictionary, aim_dir: Vector3) -> bool:
+	if clock < float(rec.spell_ready.get(id, 0.0)):
+		return false
+	var cost: float = def["mana"]
+	if p.mana < cost:
+		_tell(rec.peer_id, "Not enough mana.")
+		return false
+	var ok := true
+	match id:
+		"fireball":
+			_cast_fireball(rec, p, def, aim_dir)
+		"frost_bolt":
+			_cast_frost(rec, p, def, aim_dir)
+		"lightning":
+			_cast_lightning(rec, p, def, aim_dir)
+		"heal_aura":
+			_cast_heal(rec, p, def)
+		"blink":
+			ok = _cast_blink(rec, p, def, aim_dir)
+		"earth_wall":
+			ok = _cast_earth_wall(rec, p, def, aim_dir)
+		_:
+			ok = false
+	if ok:
+		p.mana = maxf(p.mana - cost, 0.0)
+		rec.spell_ready[id] = clock + float(def["cooldown"])
+	return ok
+
+
+## Walks a straight ray from start until it hits the ground, a solid piece, or (if
+## enemy_team >= 0) an enemy. Returns [end point, Player hit or null].
+func _trace(start: Vector3, dir: Vector3, max_range: float, enemy_team: int) -> Array:
+	var point := start
+	var travelled := 0.0
+	var structures: Array[Structure] = []
+	for s in world.get_structures():
+		if not s.is_trap() and not s.is_ladder() and _near_segment(s.global_position, start, start + dir * max_range, 6.0):
+			structures.append(s)
+	while travelled < max_range:
+		point += dir * 0.5
+		travelled += 0.5
+		if point.y <= Terrain.height(point.x, point.z):
+			return [point, null]
+		for p in world.get_players():
+			if p.team == enemy_team and p.alive and p.chest().distance_to(point) < 1.0:
+				return [point, p]
+		for s in structures:
+			if s.blocks_point(point):
+				return [point, null]
+	return [point, null]
+
+
+func _cast_frost(rec: PlayerRecord, caster: Player, def: Dictionary, aim_dir: Vector3) -> void:
+	var start := caster.sync_pos + Vector3(0, 1.5, 0)
+	var hit := _trace(start, aim_dir, def["range"], 1 - rec.team)
+	world.fx_spell.rpc("frost", start, hit[0])
+	var victim: Player = hit[1]
+	if victim:
+		damage_player(victim.peer_id, def["damage"], rec.peer_id, "frost bolt", start)
+		var vrec: PlayerRecord = records.get(victim.peer_id)
+		if vrec and victim.alive:
+			vrec.slow_until = clock + float(def["slow"])
+			victim.slowed = true
+
+
+func _cast_lightning(rec: PlayerRecord, caster: Player, def: Dictionary, aim_dir: Vector3) -> void:
+	var start := caster.sync_pos + Vector3(0, 1.5, 0)
+	var hit := _trace(start, aim_dir, def["range"], 1 - rec.team)
+	var points: Array = [start, hit[0]]
+	var victim: Player = hit[1]
+	if victim:
+		var struck: Array[Player] = [victim]
+		var last := victim
+		damage_player(victim.peer_id, def["damage"], rec.peer_id, "lightning", start)
+		for k in int(def["chains"]):
+			var next: Player = null
+			var best := float(def["chain_range"])
+			for p in world.get_players():
+				if p.team != rec.team and p.alive and not struck.has(p) and p.chest().distance_to(last.chest()) <= best:
+					next = p
+					best = p.chest().distance_to(last.chest())
+			if next == null:
+				break
+			struck.append(next)
+			points.append(next.chest())
+			damage_player(next.peer_id, def["chain_damage"], rec.peer_id, "lightning", last.chest())
+			last = next
+	world.fx_lightning.rpc(points)
+
+
+func _cast_heal(rec: PlayerRecord, caster: Player, def: Dictionary) -> void:
+	var radius: float = def["radius"]
+	for p in world.get_players():
+		if p.team == rec.team and p.alive and p.sync_pos.distance_to(caster.sync_pos) <= radius:
+			p.health = minf(p.max_health, p.health + float(def["heal"]))
+	world.fx_spell.rpc("heal", caster.sync_pos, caster.sync_pos + Vector3(radius, 0, 0))
+
+
+func _cast_blink(rec: PlayerRecord, p: Player, def: Dictionary, aim_dir: Vector3) -> bool:
+	if p.carrying_crown >= 0:
+		_tell(rec.peer_id, "The crown is too heavy to blink with.")
+		return false
+	var flat := Vector3(aim_dir.x, 0, aim_dir.z).normalized()
+	var from := p.sync_pos
+	var dest := from
+	var step := 0.5
+	var travelled := 0.0
+	while travelled < float(def["range"]):
+		var next := dest + flat * step
+		next.y = Terrain.height(next.x, next.z)
+		if not GameData.in_bounds(next, 1.0) or next.y - dest.y > 1.5:
+			break
+		var blocked := false
+		for s in world.get_structures():
+			if not s.is_trap() and not s.is_ladder() and (s.blocks_point(next + Vector3(0, 1.0, 0)) or s.blocks_point(next + Vector3(0, 1.7, 0))):
+				blocked = true
+				break
+		if blocked:
+			break
+		dest = next
+		travelled += step
+	if travelled < 1.0:
+		return false
+	_teleport_player(rec.peer_id, dest + Vector3(0, 0.1, 0))
+	world.fx_spell.rpc("blink", from + Vector3(0, 1, 0), dest + Vector3(0, 1, 0))
+	return true
+
+
+func _cast_earth_wall(rec: PlayerRecord, p: Player, def: Dictionary, aim_dir: Vector3) -> bool:
+	var flat := Vector3(aim_dir.x, 0, aim_dir.z).normalized()
+	var spot := p.sync_pos + flat * 3.5
+	spot.y = Terrain.height(spot.x, spot.z)
+	var slot := BuildGrid.slot_for("earth_wall_piece", spot, aim_dir, p.sync_pos)
+	var problem := world.placement_problem("earth_wall_piece", slot)
+	if problem != "" and not problem.begins_with("That needs support"):
+		_tell(rec.peer_id, problem)
+		return false
+	world.structure_spawner.spawn({
+		"uid": _next_structure_uid, "item": "earth_wall_piece", "team": rec.team, "owner": rec.peer_id,
+		"slot": slot, "lifetime": def["lifetime"],
+	})
+	_next_structure_uid += 1
+	return true
+
+
+## A summoned piece's time is up.
+func expire_structure(s: Structure) -> void:
+	if not s.is_queued_for_deletion():
+		s.queue_free()
+		_collapse_pending = true
 
 
 # =============================================================================
@@ -655,7 +857,7 @@ func _melee(rec: PlayerRecord, attacker: Player, def: Dictionary, aim_dir: Vecto
 			best_d = d
 
 	if best is Player:
-		damage_player(best.peer_id, def["damage"], rec.peer_id)
+		damage_player(best.peer_id, def["damage"], rec.peer_id, "", attacker.sync_pos, true)
 	elif best is Structure:
 		damage_structure(best, def.get("structure_damage", 1.0))
 	elif best is ResourceNode:
@@ -675,7 +877,7 @@ func _gather(rec: PlayerRecord, node: ResourceNode, def: Dictionary) -> void:
 	if power <= 0:
 		_tell(rec.peer_id, "You need a pickaxe to mine %s." % GameData.display_name(node.res_type))
 		return
-	var amount := mini(node.amount, roundi(power * rec.gather_mult))
+	var amount := mini(node.amount, roundi(power * (rec.gather_mult + 0.25 * rec.rank("lumberjack"))))
 	rec.inventory.add(node.res_type, amount)
 	world.set_resource_amount(node.index, node.amount - amount)
 	_push_private(rec.peer_id)
@@ -750,7 +952,8 @@ func _shoot(rec: PlayerRecord, shooter: Player, def: Dictionary, aim_dir: Vector
 			break
 	world.fx_arrow.rpc(start, aim_dir * float(def["speed"]), t)
 	if hit_player:
-		damage_player(hit_player.peer_id, def["damage"], rec.peer_id)
+		var dmg := float(def["damage"]) * (1.0 + 0.15 * rec.rank("marksman"))
+		damage_player(hit_player.peer_id, dmg, rec.peer_id, "", start)
 	elif hit_structure and hit_structure.team != rec.team:
 		damage_structure(hit_structure, def.get("structure_damage", 1.0))
 	return true
@@ -762,13 +965,22 @@ func _near_segment(p: Vector3, a: Vector3, b: Vector3, radius: float) -> bool:
 	return p2.distance_to(closest) <= radius
 
 
-func damage_player(victim_peer: int, amount: float, attacker_peer: int, cause := "") -> void:
+## `from` is where the hit came from (for shield blocking; Vector3.INF = unblockable).
+## Melee hits caught right as the shield goes up are parried: no damage, and the
+## attacker is stunned.
+func damage_player(victim_peer: int, amount: float, attacker_peer: int, cause := "", from := Vector3.INF, melee := false) -> void:
 	var victim := world.get_player(victim_peer)
 	if victim == null or not victim.alive or match_over:
 		return
 	var vrec: PlayerRecord = records.get(victim_peer)
 	if vrec and clock < vrec.protected_until:
 		return
+	if from != Vector3.INF and victim.blocking and vrec and vrec.shield() != "" and _facing(victim, from):
+		if melee and clock - victim.block_started <= GameData.PARRY_WINDOW:
+			_parry(victim, attacker_peer)
+			return
+		amount *= 1.0 - float(GameData.item(vrec.shield())["block"])
+		world.fx_block.rpc(victim.chest(), false)
 	victim.health = maxf(victim.health - amount, 0.0)
 	var killed := victim.health <= 0.0
 	if attacker_peer != victim_peer:
@@ -777,6 +989,27 @@ func damage_player(victim_peer: int, amount: float, attacker_peer: int, cause :=
 		(victim.get_node("Brain") as BotBrain).on_damaged(attacker_peer)
 	if killed:
 		_kill(victim, attacker_peer, cause)
+
+
+## Is `from` in front of the victim (within the shield's arc)?
+func _facing(victim: Player, from: Vector3) -> bool:
+	var to := Vector3(from.x - victim.sync_pos.x, 0, from.z - victim.sync_pos.z)
+	if to.length_squared() < 0.01:
+		return true
+	var forward := Vector3(-sin(victim.sync_yaw), 0, -cos(victim.sync_yaw))
+	return forward.angle_to(to.normalized()) <= GameData.BLOCK_ARC
+
+
+func _parry(victim: Player, attacker_peer: int) -> void:
+	world.fx_block.rpc(victim.chest(), true)
+	var attacker := world.get_player(attacker_peer)
+	var arec: PlayerRecord = records.get(attacker_peer)
+	if attacker and arec:
+		attacker.stunned = true
+		arec.stun_until = clock + GameData.PARRY_STUN
+		arec.next_action_time = maxf(arec.next_action_time, arec.stun_until)
+	_tell(victim.peer_id, "Parried!")
+	_tell(attacker_peer, "Your attack was parried!")
 
 
 func damage_structure(s: Structure, amount: float) -> void:
@@ -793,6 +1026,8 @@ func damage_structure(s: Structure, amount: float) -> void:
 func _kill(victim: Player, killer_peer: int, cause: String) -> void:
 	victim.alive = false
 	victim.mounted = false
+	victim.slowed = false
+	victim.stunned = false
 	if victim.carrying_crown >= 0:
 		_drop_crown(crowns[victim.carrying_crown], victim.sync_pos)
 	var vrec: PlayerRecord = records.get(victim.peer_id)
@@ -803,6 +1038,7 @@ func _kill(victim: Player, killer_peer: int, cause: String) -> void:
 	if krec and killer_peer != victim.peer_id:
 		krec.kills += 1
 		krec.gold += GameData.GOLD_PER_KILL
+		krec.skill_points += GameData.SKILL_POINTS_PER_KILL
 		_push_private(killer_peer)
 		var how := ("'s %s" % cause) if cause != "" else ""
 		_announce("%s%s slew %s." % [krec.name, how, victim.display_name])
@@ -821,8 +1057,10 @@ func _respawn(peer: int) -> void:
 	var p := world.get_player(peer)
 	if rec == null or p == null or p.alive:
 		return
-	p.max_health = GameData.PLAYER_MAX_HEALTH + rec.bonus_health
+	p.max_health = rec.max_health()
 	p.health = p.max_health
+	p.max_mana = rec.max_mana()
+	p.mana = p.max_mana
 	p.carrying_crown = -1
 	p.alive = true
 	rec.protected_until = clock + GameData.SPAWN_PROTECTION
@@ -846,7 +1084,7 @@ func nearest_enemy(pos: Vector3, team: int, max_range: float) -> Player:
 func fire_turret(s: Structure, target: Player, turret: Dictionary) -> void:
 	var from := s.top() + Vector3(0, 0.3, 0)
 	world.fx_bolt.rpc(from, target.sync_pos + Vector3(0, 1.0, 0))
-	damage_player(target.peer_id, turret["damage"], s.owner_peer, "ballista")
+	damage_player(target.peer_id, turret["damage"], s.owner_peer, "ballista", from)
 
 
 func ram_hit(ram: Structure, target: Structure) -> void:
@@ -941,6 +1179,11 @@ func _use_consumable(rec: PlayerRecord, p: Player, item_id: String, def: Diction
 			p.health += bonus
 		"gather_mult":
 			rec.gather_mult += float(def["amount"])
+		"mana":
+			if p.mana >= p.max_mana:
+				used = false
+			else:
+				p.mana = minf(p.max_mana, p.mana + float(def["amount"]))
 		_:
 			used = false
 	if used:
@@ -972,7 +1215,7 @@ func _cast_fireball(rec: PlayerRecord, caster: Player, def: Dictionary, aim_dir:
 	world.fx_fireball.rpc(start, impact, radius)
 	for p in world.get_players():
 		if p.team != rec.team and p.alive and (p.sync_pos + Vector3(0, 0.9, 0)).distance_to(impact) <= radius:
-			damage_player(p.peer_id, def["damage"], rec.peer_id, "fireball")
+			damage_player(p.peer_id, def["damage"], rec.peer_id, "fireball", impact)
 	for s in world.get_structures():
 		if s.team != rec.team and s.closest_point(impact).distance_to(impact) <= radius:
 			damage_structure(s, def["structure_damage"])
@@ -1007,6 +1250,7 @@ func _physics_process(delta: float) -> void:
 	if match_over:
 		return
 	_check_movement()
+	_tick_status(delta)
 	for crown in crowns:
 		if crown.state == CrownRules.State.CARRIED:
 			var carrier := world.get_player(crown.carrier)
@@ -1037,6 +1281,34 @@ func _collapse_unsupported() -> void:
 			_collapse_pending = true
 
 
+var _mana_timer := 0.0
+
+
+## Mana regenerates in half-second steps (fewer network updates); slows and stuns wear off.
+var _status_timer := 0.0
+
+
+func _tick_status(delta: float) -> void:
+	_status_timer -= delta
+	if _status_timer > 0.0:
+		return
+	_status_timer = 0.1
+	_mana_timer -= 0.1
+	var regen_tick := _mana_timer <= 0.0
+	if regen_tick:
+		_mana_timer = 0.5
+	for rec: PlayerRecord in records.values():
+		var p := world.get_player(rec.peer_id)
+		if p == null:
+			continue
+		if p.slowed and clock >= rec.slow_until:
+			p.slowed = false
+		if p.stunned and clock >= rec.stun_until:
+			p.stunned = false
+		if regen_tick and p.alive and p.mana < p.max_mana:
+			p.mana = minf(p.max_mana, p.mana + rec.mana_regen() * 0.5)
+
+
 ## Movement is client-owned, so the server rejects anything faster than a horse.
 func _check_movement() -> void:
 	for rec: PlayerRecord in records.values():
@@ -1046,7 +1318,7 @@ func _check_movement() -> void:
 		if p == null or not p.alive:
 			continue
 		var elapsed := clock - rec.last_move_check
-		var allowed := GameData.MAX_PLAYER_SPEED * 1.3 * elapsed + 1.5
+		var allowed := GameData.MAX_PLAYER_SPEED * 1.5 * elapsed + 1.5  # headroom for Swiftness
 		rec.last_move_check = clock
 		if GameData.flat_distance(p.sync_pos, rec.last_valid_pos) > allowed:
 			_send_to(rec.peer_id, &"_teleport", [rec.last_valid_pos])
@@ -1122,6 +1394,7 @@ func _capture(carrier: Player, crown: CrownState) -> void:
 			if rec.peer_id == carrier.peer_id:
 				rec.gold += GameData.GOLD_PER_CAPTURE
 				rec.captures += 1
+				rec.skill_points += GameData.SKILL_POINTS_PER_CAPTURE
 			_push_private(rec.peer_id)
 	_scoreboard_dirty = true
 	_sync_crowns()
@@ -1170,6 +1443,10 @@ func _reset_match() -> void:
 		if p:
 			p.max_health = GameData.PLAYER_MAX_HEALTH
 			p.health = p.max_health
+			p.max_mana = GameData.PLAYER_MAX_MANA
+			p.mana = p.max_mana
+			p.slowed = false
+			p.stunned = false
 			p.mounted = false
 			p.carrying_crown = -1
 			p.alive = true
