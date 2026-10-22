@@ -126,6 +126,7 @@ See [docs/DESIGN.md](docs/DESIGN.md) for the game design and roadmap, and
 
 - The knight, his animations, swords, axe, bows and shields: KayKit Adventurers and
   KayKit Character Animations by [Kay Lousberg](https://www.kaylousberg.com)
+- The horse: Farm Animals Animated by [Quaternius](https://quaternius.com)
 - Castle pieces, camp tools, trees, rocks and plants: Castle Kit, Survival Kit and
   Nature Kit by [Kenney](https://kenney.nl)
 

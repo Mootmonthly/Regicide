@@ -16,6 +16,8 @@ const REMOTE_SMOOTHING := 15.0
 const CLIMB_SPEED := 4.0
 const WADE_MULT := 0.45
 const EYE_HEIGHT := 1.65
+## How much higher your eyes (and aim) are in the saddle.
+const MOUNTED_EYE_LIFT := 1.2
 const BODY_LAYER := 2  ## render layer for your own body, hidden from your first-person camera
 
 var peer_id := 1
@@ -109,7 +111,7 @@ var _weapon: Node3D
 var _last_anim_pos := Vector3.ZERO
 var _anim_speed := 0.0
 var _anim_vy := 0.0
-var _horse: Node3D
+var _horse: HorseVisual
 var _world: World
 var _ghost: Node3D
 var _ghost_item := ""
@@ -230,6 +232,8 @@ func _physics_process(delta: float) -> void:
 		_anim_vy = lerpf(_anim_vy, moved.y, 0.3)
 		var grounded := is_on_floor() if is_multiplayer_authority() else absf(_anim_vy) < 1.5
 		_look.update_motion(_anim_speed, _anim_vy, grounded or on_ladder, mounted, blocking)
+		if mounted and _horse:
+			_horse.update_motion(_anim_speed)
 	if is_multiplayer_authority():
 		_owner_physics(delta)
 		return
@@ -578,8 +582,9 @@ func _build_visuals() -> void:
 	_speaking_label.visible = false
 	_body.add_child(_speaking_label)
 
-	_horse = _make_horse(tc)
+	_horse = HorseVisual.new()
 	add_child(_horse)
+	_horse.setup(peer_id, team)
 
 	_refresh_weapon()
 	_refresh_mount()
@@ -612,38 +617,18 @@ func _refresh_weapon() -> void:
 			_vm_hand.add_child(_vm_weapon)
 
 
-## A simple low-poly horse with a team-colored saddle blanket.
-func _make_horse(tc: Color) -> Node3D:
-	var horse := Node3D.new()
-	var coat := Color(0.42, 0.28, 0.16)
-	var dark := Color(0.2, 0.14, 0.09)
-	horse.add_child(Visuals.box(Vector3(0.7, 0.75, 1.7), coat, Vector3(0, 1.15, 0)))
-	var neck := Visuals.box(Vector3(0.38, 0.85, 0.4), coat, Vector3(0, 1.6, -0.85))
-	neck.rotation.x = -0.6
-	horse.add_child(neck)
-	horse.add_child(Visuals.box(Vector3(0.32, 0.32, 0.65), coat, Vector3(0, 1.95, -1.25)))
-	horse.add_child(Visuals.box(Vector3(0.1, 0.5, 0.42), dark, Vector3(0, 1.85, -0.85)))  # mane
-	for x in [-0.25, 0.25]:
-		for z in [-0.65, 0.65]:
-			horse.add_child(Visuals.box(Vector3(0.16, 0.85, 0.16), coat, Vector3(x, 0.42, z)))
-			horse.add_child(Visuals.box(Vector3(0.18, 0.12, 0.18), dark, Vector3(x, 0.06, z)))
-	var tail := Visuals.box(Vector3(0.1, 0.6, 0.1), dark, Vector3(0, 1.1, 0.95))
-	tail.rotation.x = 0.4
-	horse.add_child(tail)
-	horse.add_child(Visuals.box(Vector3(0.76, 0.06, 0.7), tc, Vector3(0, 1.54, 0.05)))
-	return horse
-
-
 func _refresh_mount() -> void:
 	if _horse == null:
 		return
 	_horse.visible = mounted
-	_body.position.y = 1.3 if mounted else 0.0  # sitting on the horse's back
+	_body.position.y = HorseVisual.SEAT_HEIGHT - 0.35 if mounted else 0.0  # in the saddle
+	if _pivot:
+		_pivot.position.y = EYE_HEIGHT + (MOUNTED_EYE_LIFT if mounted else 0.0)
 
 
 func _build_camera() -> void:
 	_pivot = Node3D.new()
-	_pivot.position = Vector3(0, EYE_HEIGHT, 0)
+	_pivot.position = Vector3(0, EYE_HEIGHT + (MOUNTED_EYE_LIFT if mounted else 0.0), 0)
 	add_child(_pivot)
 	_arm = SpringArm3D.new()
 	_arm.collision_mask = 1 | 4
