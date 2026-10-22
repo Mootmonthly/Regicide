@@ -47,13 +47,19 @@ Nodes shrink as they're harvested, vanish when empty, and regrow after 60–120 
 
 ## Items
 
-**Free to craft:** Stone Axe, Pickaxe, Wooden Club, Iron Sword, Wooden Wall, Stone Wall.
+**Free to craft:** Stone Axe, Pickaxe, Wooden Club, Iron Sword, Shortbow, Arrows (×5),
+Wooden Wall, Stone Wall, Wooden Gate (your team walks through it, enemies can't).
+
+Arrows fly in a real arc (the server simulates the flight), are blocked by enemy walls
+and trees, and are used up even on a miss.
 
 **Blueprints (gold):**
 
 | Blueprint | Gold | What it does |
 | --- | --- | --- |
 | Health Potion | 75 | Heal 50 |
+| Spike Trap | 100 | Hurts enemies standing on it; doesn't block movement |
+| Crossbow | 175 | 42 damage, flat and fast, slow reload |
 | War Hammer | 150 | 45 damage, slow, wrecks walls |
 | Horse Saddle | 150 | Mounted: 1.7× speed until death (no bonus while carrying a crown) |
 | Skillbook: Gatherer | 150 | +50% gather yield for the match |
@@ -82,29 +88,53 @@ Unlocks are per player and last until the match ends.
 | Capture | 250 to the carrier, 75 to every teammate |
 | Return own crown | 25 |
 
+## Bots
+
+Empty slots are filled with server-side bots ("Team size" in the menu, `--bots N` on the
+command line). Humans joining replace bots. Bots use exactly the same server requests as
+players, so they obey every cooldown, cost and range rule. Per 10 bots:
+
+| Role | Count | Behavior |
+| --- | --- | --- |
+| Gatherer | 4 | Builds the economy (tools, sword, bow, skillbooks), joins the attack later |
+| Attacker | 4 | Arms up, rallies, then charges in waves around a flank; escorts carriers |
+| Defender | 2 | Builds a wall ring (with gaps), ballistas and traps around the crown; guards it |
+
+Everyone chases a thief who gets close; attackers hunt thieves anywhere (this breaks
+"both crowns stolen" standoffs). A 50v50 bot match typically ends 3–1 in 8–10 minutes.
+
+## Combat feel
+
+Hit flash and floating damage numbers, death topple, hit markers on the crosshair, a red
+screen flash when hurt, debris and wobble when gathering, damage bars on structures,
+arrow arcs, and synthesized sound effects for every action plus crown jingles.
+
+## Fair play
+
+Movement is client-owned for responsiveness; the server snaps back anyone moving faster
+than a horse can. Players get 3 s of spawn protection.
+
 ## Open questions
 
 - Should dying drop some carried resources (loot to fight over)?
 - Team-wide vs per-player unlocks? (Per-player today.)
-- Gates that only your team can walk through.
 - Repairing structures; showing structure health.
-- Ranged weapons (bows, crossbows) and blocking/parrying for melee depth.
+- Blocking/parrying for melee depth.
 - Should a stolen crown ping its location on the enemy's map?
 - Classes / roles, or keep it fully sandbox?
 
 ## Roadmap
 
-**Next up (playable prototype → fun prototype)**
-- Bots to fill empty slots, so 50v50 can be tested without 100 people.
-- Hit feedback: damage numbers, hit flash, death animation, sounds.
-- Scoreboard (Tab-hold) and minimap with crown markers.
-- Gates, ramps/watchtowers, spike traps.
-- Bows and blocking.
+**Next up**
+- Playtest with real people and tune: gather speed, prices, crown carry speed, bot skill.
+- Bot difficulty setting; smarter bot pathing around walls.
+- Ramps / watchtowers (height advantage for archers), repairing structures.
+- Blocking, sprint stamina, a few more spells (heal aura, frost bolt).
+- Death drops some resources; respawn wave timer.
 
 **Later**
-- Server-side movement validation (speed / teleport checks) — movement is currently
-  client-authoritative.
-- Interest management (only replicate nearby players) for full 100-player matches.
+- Interest management (only replicate nearby players) for 100 humans over the internet.
+- Server-side hit validation against lag-compensated positions.
 - MultiMesh rendering for resource nodes.
 - Lobby / server browser, persistent progression, cosmetics.
-- Real art pass (still low-poly and readable).
+- Real art and audio pass (still low-poly and readable).

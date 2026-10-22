@@ -8,7 +8,8 @@ const KEYS := {
 	"move_right": [KEY_D, KEY_RIGHT],
 	"jump": [KEY_SPACE],
 	"sprint": [KEY_SHIFT],
-	"toggle_menu": [KEY_TAB, KEY_C],
+	"toggle_menu": [KEY_C, KEY_B],
+	"scoreboard": [KEY_TAB],
 	"release_mouse": [KEY_ESCAPE],
 }
 

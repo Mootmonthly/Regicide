@@ -8,7 +8,10 @@ const TEAM_COUNT := 2
 const TEAM_SIZE := 50
 const CAPTURES_TO_WIN := 3
 const RESPAWN_TIME := 6.0
+const SPAWN_PROTECTION := 3.0
 const MATCH_RESTART_DELAY := 15.0
+## Default number of players per team (bots fill the empty slots).
+const DEFAULT_TEAM_FILL := 20
 
 # --- Crown (capture-the-flag) --------------------------------------------
 const CROWN_TOUCH_RADIUS := 2.0
@@ -19,6 +22,9 @@ const NO_BUILD_RADIUS := 6.0
 
 # --- Players -------------------------------------------------------------
 const PLAYER_MAX_HEALTH := 100.0
+## Fastest legit ground speed (sprinting on a horse), used by the server's speed check.
+const MAX_PLAYER_SPEED := 9.0 * 1.7
+const ARROW_GRAVITY := 9.8
 
 # --- Economy (gold) ------------------------------------------------------
 const START_GOLD := 0
@@ -98,6 +104,28 @@ const ITEMS := {
 		"color": Color(0.35, 0.35, 0.4),
 		"desc": "Slow, brutal, and wrecks walls.",
 	},
+	"shortbow": {
+		"name": "Shortbow", "kind": "ranged", "unlock_cost": 0,
+		"recipe": {"wood": 10, "stone": 2},
+		"damage": 20.0, "cooldown": 0.9, "speed": 55.0, "range": 60.0, "ammo": "arrow",
+		"structure_damage": 2.0,
+		"color": Color(0.6, 0.42, 0.2),
+		"desc": "Shoots arrows. Needs arrows.",
+	},
+	"crossbow": {
+		"name": "Crossbow", "kind": "ranged", "unlock_cost": 175,
+		"recipe": {"wood": 6, "iron": 6},
+		"damage": 42.0, "cooldown": 1.8, "speed": 85.0, "range": 80.0, "ammo": "arrow",
+		"structure_damage": 6.0,
+		"color": Color(0.3, 0.25, 0.22),
+		"desc": "Slow to reload, hits hard and flat. Needs arrows.",
+	},
+	"arrow": {
+		"name": "Arrows", "kind": "ammo", "unlock_cost": 0,
+		"recipe": {"wood": 2, "stone": 1}, "yield": 5,
+		"color": Color(0.7, 0.6, 0.45),
+		"desc": "5 arrows for bows and crossbows.",
+	},
 	# Structures
 	"wooden_wall": {
 		"name": "Wooden Wall", "kind": "structure", "unlock_cost": 0,
@@ -112,6 +140,21 @@ const ITEMS := {
 		"health": 800.0, "size": Vector3(4.0, 3.5, 0.8),
 		"color": Color(0.6, 0.6, 0.62),
 		"desc": "Sturdy masonry.",
+	},
+	"wooden_gate": {
+		"name": "Wooden Gate", "kind": "structure", "unlock_cost": 0,
+		"recipe": {"wood": 14},
+		"health": 350.0, "size": Vector3(4.0, 3.0, 0.5), "gate": true,
+		"color": Color(0.62, 0.45, 0.25),
+		"desc": "A wall your own team can walk through.",
+	},
+	"spike_trap": {
+		"name": "Spike Trap", "kind": "structure", "unlock_cost": 100,
+		"recipe": {"wood": 6, "iron": 3},
+		"health": 120.0, "size": Vector3(2.0, 0.3, 2.0),
+		"trap": {"damage": 12.0, "interval": 0.75},
+		"color": Color(0.5, 0.5, 0.52),
+		"desc": "Hurts enemies standing on it. Doesn't block movement.",
 	},
 	"ballista": {
 		"name": "Ballista", "kind": "structure", "unlock_cost": 300,
@@ -159,8 +202,23 @@ const ITEMS := {
 	},
 }
 
-const ITEM_KINDS := ["tool", "weapon", "structure", "consumable"]
+const ITEM_KINDS := ["tool", "weapon", "ranged", "ammo", "structure", "consumable"]
 const MELEE_KINDS := ["fists", "tool", "weapon"]
+
+
+const BOT_NAMES := [
+	"Aldric", "Beatrix", "Cedric", "Daria", "Edmund", "Fenna", "Godfrey", "Hilde", "Ivo",
+	"Jocelyn", "Kenric", "Leofa", "Merek", "Nell", "Osric", "Petra", "Quentin", "Rowena",
+	"Sigmund", "Tamsin", "Ulric", "Vala", "Wystan", "Ysolde", "Alaric", "Brunhild",
+	"Conrad", "Dunstan", "Elric", "Freya", "Gunnar", "Helga", "Isolde", "Jorund", "Kara",
+	"Lothar", "Maud", "Njal", "Odo", "Perrin", "Ragna", "Sven", "Thora", "Uther", "Viggo",
+	"Wulfric", "Yrsa", "Bertram", "Cuthbert", "Eadric",
+]
+
+
+## Physics layer bit for a team's gates (layers 5 and 6). Enemies collide with them.
+static func gate_layer(team: int) -> int:
+	return 16 if team == 0 else 32
 
 
 static func item(id: String) -> Dictionary:

@@ -4,6 +4,7 @@ extends Control
 var _name: LineEdit
 var _address: LineEdit
 var _port: SpinBox
+var _team_fill: SpinBox
 
 
 func _ready() -> void:
@@ -47,6 +48,21 @@ func _ready() -> void:
 	_port.size_flags_horizontal = Control.SIZE_EXPAND_FILL
 	port_row.add_child(_port)
 
+	var fill_row := HBoxContainer.new()
+	col.add_child(fill_row)
+	var fill_label := Label.new()
+	fill_label.text = "Team size"
+	fill_label.custom_minimum_size.x = 130
+	fill_label.tooltip_text = "When hosting: bots fill each team up to this many players."
+	fill_row.add_child(fill_label)
+	_team_fill = SpinBox.new()
+	_team_fill.min_value = 0
+	_team_fill.max_value = GameData.TEAM_SIZE
+	_team_fill.value = Net.team_fill
+	_team_fill.suffix = "(bots fill)"
+	_team_fill.size_flags_horizontal = Control.SIZE_EXPAND_FILL
+	fill_row.add_child(_team_fill)
+
 	_button(col, "Host & Play", Net.Mode.HOST)
 	_button(col, "Join", Net.Mode.JOIN)
 	_button(col, "Dedicated Server (no player)", Net.Mode.DEDICATED)
@@ -84,5 +100,6 @@ func _button(parent: Control, text: String, mode: Net.Mode) -> void:
 		Net.player_name = _name.text.strip_edges()
 		Net.address = _address.text.strip_edges()
 		Net.port = int(_port.value)
+		Net.team_fill = int(_team_fill.value)
 		Net.play(mode))
 	parent.add_child(b)

@@ -23,6 +23,14 @@ var _menu: PanelContainer
 var _menu_gold: Label
 var _menu_list: VBoxContainer
 var _banner: Label
+var _crosshair: Label
+var _vignette: ColorRect
+var _scoreboard: PanelContainer
+var _scoreboard_cols: Array[VBoxContainer] = []
+var _minimap: Minimap
+var _last_health := -1.0
+var _last_crown_states: Array = []
+var _crosshair_tween: Tween
 
 
 func _ready() -> void:
@@ -36,6 +44,11 @@ func _ready() -> void:
 	_game_mode.private_updated.connect(_on_private_updated)
 	_game_mode.message_received.connect(_add_message)
 	_game_mode.match_over_changed.connect(_on_match_over_changed)
+	_game_mode.hit_confirmed.connect(_on_hit_confirmed)
+	_game_mode.crowns_updated.connect(_on_crowns_updated)
+	_game_mode.scoreboard_updated.connect(_rebuild_scoreboard)
+	for c in _game_mode.crowns:
+		_last_crown_states.append(c.state)
 
 
 func _label(text := "", size := 18) -> Label:
@@ -74,11 +87,30 @@ func _build() -> void:
 	_crowns.offset_top = 44
 	root.add_child(_crowns)
 
-	var crosshair := _label("+", 24)
-	crosshair.set_anchors_and_offsets_preset(Control.PRESET_CENTER)
-	crosshair.grow_horizontal = Control.GROW_DIRECTION_BOTH
-	crosshair.grow_vertical = Control.GROW_DIRECTION_BOTH
-	root.add_child(crosshair)
+	_vignette = ColorRect.new()
+	_vignette.set_anchors_preset(Control.PRESET_FULL_RECT)
+	_vignette.color = Color(0.8, 0.0, 0.0, 0.0)
+	_vignette.mouse_filter = Control.MOUSE_FILTER_IGNORE
+	root.add_child(_vignette)
+	root.move_child(_vignette, 0)
+
+	_crosshair = _label("+", 24)
+	_crosshair.set_anchors_and_offsets_preset(Control.PRESET_CENTER)
+	_crosshair.horizontal_alignment = HORIZONTAL_ALIGNMENT_CENTER
+	_crosshair.vertical_alignment = VERTICAL_ALIGNMENT_CENTER
+	_crosshair.grow_horizontal = Control.GROW_DIRECTION_BOTH
+	_crosshair.grow_vertical = Control.GROW_DIRECTION_BOTH
+	root.add_child(_crosshair)
+
+	_minimap = Minimap.new()
+	_minimap.world = _world
+	_minimap.game_mode = _game_mode
+	_minimap.set_anchors_and_offsets_preset(Control.PRESET_BOTTOM_RIGHT)
+	_minimap.offset_left = -136
+	_minimap.offset_top = -232
+	_minimap.offset_right = -16
+	_minimap.offset_bottom = -16
+	root.add_child(_minimap)
 
 	_center = _label("", 30)
 	_center.set_anchors_and_offsets_preset(Control.PRESET_CENTER)
@@ -134,11 +166,12 @@ func _build() -> void:
 	_hotbar.add_theme_constant_override("separation", 6)
 	bottom.add_child(_hotbar)
 
-	var help := _label("WASD move · Shift sprint · Space jump · LMB use · 1-9 / wheel select · Tab craft & shop · Esc free mouse", 13)
+	var help := _label("WASD move · Shift sprint · Space jump · LMB use · 1-9 / wheel select · C craft & shop · Tab scores · Esc free mouse", 13)
 	help.horizontal_alignment = HORIZONTAL_ALIGNMENT_CENTER
 	bottom.add_child(help)
 
 	_build_menu(root)
+	_build_scoreboard(root)
 	_rebuild_hotbar()
 
 
@@ -176,9 +209,80 @@ func _build_menu(root: Control) -> void:
 	scroll.add_child(_menu_list)
 
 
+func _build_scoreboard(root: Control) -> void:
+	_scoreboard = PanelContainer.new()
+	_scoreboard.set_anchors_and_offsets_preset(Control.PRESET_CENTER)
+	_scoreboard.grow_horizontal = Control.GROW_DIRECTION_BOTH
+	_scoreboard.grow_vertical = Control.GROW_DIRECTION_BOTH
+	_scoreboard.custom_minimum_size = Vector2(820, 0)
+	_scoreboard.visible = false
+	_scoreboard.mouse_filter = Control.MOUSE_FILTER_IGNORE
+	root.add_child(_scoreboard)
+	var margin := MarginContainer.new()
+	for side in ["left", "right", "top", "bottom"]:
+		margin.add_theme_constant_override("margin_" + side, 12)
+	_scoreboard.add_child(margin)
+	var row := HBoxContainer.new()
+	row.add_theme_constant_override("separation", 24)
+	margin.add_child(row)
+	for t in GameData.TEAM_COUNT:
+		var col := VBoxContainer.new()
+		col.size_flags_horizontal = Control.SIZE_EXPAND_FILL
+		col.add_theme_constant_override("separation", 0)
+		row.add_child(col)
+		_scoreboard_cols.append(col)
+
+
+func _rebuild_scoreboard() -> void:
+	if not _scoreboard.visible:
+		return
+	for t in GameData.TEAM_COUNT:
+		var col := _scoreboard_cols[t]
+		for c in col.get_children():
+			c.queue_free()
+		var rows: Array = []
+		for r: Array in _game_mode.scoreboard:
+			if r[1] == t:
+				rows.append(r)
+		rows.sort_custom(func(a: Array, b: Array) -> bool: return a[4] * 10 + a[2] > b[4] * 10 + b[2])
+		var header := _label("%s — %d captures   (%d players)" % [GameData.team_name(t), _game_mode.scores[t], rows.size()], 20)
+		header.label_settings.font_color = GameData.team_color(t).lerp(Color.WHITE, 0.35)
+		col.add_child(header)
+		col.add_child(_score_row("Name", "K", "D", "Cap", Color(0.8, 0.8, 0.8)))
+		var me := _world.local_player()
+		for r: Array in rows.slice(0, 26):
+			var nm: String = r[0] + (" (bot)" if r[5] else "")
+			var is_me: bool = me != null and r[0] == me.display_name and not r[5]
+			col.add_child(_score_row(nm, str(r[2]), str(r[3]), str(r[4]), Color(1, 0.9, 0.4) if is_me else Color.WHITE))
+		if rows.size() > 26:
+			col.add_child(_label("... and %d more" % (rows.size() - 26), 13))
+
+
+func _score_row(nm: String, k: String, d: String, cap: String, color: Color) -> HBoxContainer:
+	var row := HBoxContainer.new()
+	var widths := [220, 44, 44, 44]
+	var texts := [nm, k, d, cap]
+	for i in 4:
+		var l := _label(texts[i], 13)
+		l.custom_minimum_size.x = widths[i]
+		l.clip_text = true
+		l.label_settings.font_color = color
+		if i > 0:
+			l.horizontal_alignment = HORIZONTAL_ALIGNMENT_RIGHT
+		row.add_child(l)
+	return row
+
+
 func _unhandled_input(event: InputEvent) -> void:
 	if event.is_action_pressed("toggle_menu"):
 		set_menu_open(not menu_open)
+		get_viewport().set_input_as_handled()
+	elif event.is_action_pressed("scoreboard"):
+		_scoreboard.visible = true
+		_rebuild_scoreboard()
+		get_viewport().set_input_as_handled()
+	elif event.is_action_released("scoreboard"):
+		_scoreboard.visible = false
 		get_viewport().set_input_as_handled()
 
 
@@ -210,6 +314,10 @@ func _process(_delta: float) -> void:
 	_crowns.text = "\n".join(crown_lines)
 
 	if me:
+		if _last_health >= 0.0 and me.health < _last_health - 0.01:
+			_vignette.color.a = clampf((_last_health - me.health) / 60.0, 0.15, 0.45)
+		_last_health = me.health
+		_vignette.color.a = maxf(_vignette.color.a - _delta_time() * 0.8, 0.0)
 		_health.max_value = me.max_health
 		_health.value = me.health
 		_health_label.text = "%d / %d" % [ceili(me.health), ceili(me.max_health)]
@@ -223,6 +331,40 @@ func _process(_delta: float) -> void:
 			_hotbar.get_child(i).modulate = Color.WHITE if i == me.hotbar_index else Color(1, 1, 1, 0.55)
 
 
+func _delta_time() -> float:
+	return get_process_delta_time()
+
+
+func _on_hit_confirmed(killed: bool) -> void:
+	Sfx.play("hitmarker", -4.0 if killed else -10.0)
+	_crosshair.text = "X" if killed else "x"
+	_crosshair.modulate = Color(1, 0.25, 0.2) if killed else Color(1, 1, 1)
+	if _crosshair_tween:
+		_crosshair_tween.kill()
+	_crosshair_tween = create_tween()
+	_crosshair_tween.tween_interval(0.15 if not killed else 0.4)
+	_crosshair_tween.tween_callback(func() -> void:
+		_crosshair.text = "+"
+		_crosshair.modulate = Color.WHITE)
+
+
+## Jingles for crown events, from this player's point of view.
+func _on_crowns_updated() -> void:
+	var me := _world.local_player()
+	var my_team := me.team if me else 0
+	for c in _game_mode.crowns:
+		var before: int = _last_crown_states[c.team]
+		if before == c.state:
+			continue
+		if c.state == CrownRules.State.CARRIED:
+			Sfx.play("alarm" if c.team == my_team else "steal")
+		elif c.state == CrownRules.State.HOME and before == CrownRules.State.CARRIED:
+			Sfx.play("capture" if c.team != my_team else "alarm")
+		elif c.state == CrownRules.State.HOME:
+			Sfx.play("return")
+		_last_crown_states[c.team] = c.state
+
+
 func _crown_status(c: CrownState) -> String:
 	match c.state:
 		CrownRules.State.HOME:
@@ -231,7 +373,7 @@ func _crown_status(c: CrownState) -> String:
 			var p := _world.get_player(c.carrier)
 			return "STOLEN by %s" % (p.display_name if p else "?")
 		_:
-			var left := GameData.CROWN_AUTO_RETURN - (Time.get_ticks_msec() / 1000.0 - c.dropped_at)
+			var left := GameData.CROWN_AUTO_RETURN - (_game_mode.clock - c.dropped_at)
 			return "dropped (returns in %ds)" % maxi(ceili(left), 0)
 
 
@@ -279,7 +421,8 @@ func _rebuild_menu() -> void:
 			_menu_list.add_child(_label(kind.capitalize() + "s", 20))
 		var row := HBoxContainer.new()
 		_menu_list.add_child(row)
-		var info := _label("%s  (have %d)\n%s\nCost: %s" % [def["name"], int(_game_mode.my_inventory.get(id, 0)), def.get("desc", ""), GameData.cost_text(def["recipe"])], 14)
+		var makes := (" (makes %d)" % def["yield"]) if def.has("yield") else ""
+		var info := _label("%s  (have %d)\n%s\nCost: %s%s" % [def["name"], int(_game_mode.my_inventory.get(id, 0)), def.get("desc", ""), GameData.cost_text(def["recipe"]), makes], 14)
 		info.size_flags_horizontal = Control.SIZE_EXPAND_FILL
 		row.add_child(info)
 		var button := Button.new()
@@ -287,12 +430,16 @@ func _rebuild_menu() -> void:
 		if _game_mode.is_unlocked_locally(id):
 			button.text = "Craft"
 			button.disabled = not _can_afford(def["recipe"])
-			button.pressed.connect(func() -> void: _game_mode.request(&"request_craft", [id]))
+			button.pressed.connect(func() -> void:
+				Sfx.play("click")
+				_game_mode.request(&"request_craft", [id]))
 		else:
 			var cost: int = def["unlock_cost"]
 			button.text = "Unlock (%dg)" % cost
 			button.disabled = _game_mode.my_gold < cost
-			button.pressed.connect(func() -> void: _game_mode.request(&"request_unlock", [id]))
+			button.pressed.connect(func() -> void:
+				Sfx.play("click")
+				_game_mode.request(&"request_unlock", [id]))
 		row.add_child(button)
 
 
@@ -317,6 +464,7 @@ func _add_message(text: String) -> void:
 
 func _on_match_over_changed() -> void:
 	if _game_mode.match_over:
+		Sfx.play("victory")
 		_banner.text = "The %s claim the throne!" % GameData.team_name(_game_mode.winner)
 		_banner.label_settings.font_color = GameData.team_color(_game_mode.winner).lerp(Color.WHITE, 0.3)
 	else:

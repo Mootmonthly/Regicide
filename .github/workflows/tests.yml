@@ -19,8 +19,10 @@ jobs:
       - name: Import project
         run: godot --headless --path . --import
       - name: Unit tests
-        run: godot --headless --path . -s res://tests/run_tests.gd
+        run: timeout 120 godot --headless --path . -s res://tests/run_tests.gd
       - name: Gameplay test
-        run: godot --headless --path . res://tests/gameplay_test.tscn
+        run: timeout 300 godot --headless --path . res://tests/gameplay_test.tscn
       - name: Multiplayer smoke test
-        run: GODOT=godot tests/smoke.sh
+        run: GODOT=godot timeout 300 tests/smoke.sh
+      - name: Bot match soak (25v25, 5 game-minutes, fast-forwarded)
+        run: timeout 600 godot --headless --path . --fixed-fps 60 res://tests/bot_soak.tscn -- --minutes 5 --bots 25

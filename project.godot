@@ -20,6 +20,7 @@ config/icon="res://icon.svg"
 
 Net="*res://autoload/net.gd"
 Controls="*res://autoload/controls.gd"
+Sfx="*res://autoload/sfx.gd"
 
 [display]
 
@@ -32,6 +33,8 @@ window/size/viewport_height=720
 3d_physics/layer_2="players"
 3d_physics/layer_3="structures"
 3d_physics/layer_4="resources"
+3d_physics/layer_5="azure_gates"
+3d_physics/layer_6="crimson_gates"
 
 [rendering]
 

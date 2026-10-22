@@ -1,8 +1,9 @@
 class_name Player
 extends CharacterBody3D
-## One combatant. Movement and aim are owned by the controlling peer (OwnerSync) for
-## responsiveness; health, death, crown carrying and mounts are owned by the server
-## (ServerSync). Gameplay actions are requests the server validates.
+## One combatant, human or bot. Movement and aim are owned by the controlling peer
+## (OwnerSync): the human's own machine, or the server for bots. Health, death, crown
+## carrying and mounts are owned by the server (ServerSync). Gameplay actions are
+## requests the server validates.
 
 const WALK_SPEED := 6.0
 const SPRINT_SPEED := 9.0
@@ -16,6 +17,7 @@ const REMOTE_SMOOTHING := 15.0
 var peer_id := 1
 var team := 0
 var display_name := "Peasant"
+var is_bot := false
 
 # Replicated from the owning peer.
 var sync_pos := Vector3.ZERO
@@ -27,12 +29,20 @@ var equipped := "":
 			_refresh_weapon()
 
 # Replicated from the server.
-var health := GameData.PLAYER_MAX_HEALTH
+var health := GameData.PLAYER_MAX_HEALTH:
+	set(value):
+		var old := health
+		health = value
+		if is_node_ready() and value < old - 0.01:
+			_on_damaged(old - value)
 var max_health := GameData.PLAYER_MAX_HEALTH
 var alive := true:
 	set(value):
+		var was_alive := alive
 		alive = value
 		visible = value
+		if is_node_ready() and was_alive and not value:
+			_on_death()
 var carrying_crown := -1
 var mounted := false:
 	set(value):
@@ -40,12 +50,18 @@ var mounted := false:
 		if is_node_ready():
 			_refresh_mount()
 
+# Movement intent: read from the keyboard for humans, written by BotBrain for bots.
+var move_input := Vector2.ZERO
+var wants_sprint := false
+var wants_jump := false
+
 var hotbar_index := 0
 
 var _game_mode: GameMode
 var _pivot: Node3D
 var _camera: Camera3D
 var _body: Node3D
+var _body_mesh: MeshInstance3D
 var _hand: Node3D
 var _weapon: MeshInstance3D
 var _horse: Node3D
@@ -55,17 +71,21 @@ var _ghost_ok: StandardMaterial3D
 var _ghost_bad: StandardMaterial3D
 var _next_action_time := 0.0
 var _swing_tween: Tween
+var _flash_tween: Tween
+
+static var _flash_material: StandardMaterial3D
 
 
 func _enter_tree() -> void:
-	set_multiplayer_authority(peer_id)
+	set_multiplayer_authority(1 if is_bot else peer_id)
 	$ServerSync.set_multiplayer_authority(1)
 
 
 func _ready() -> void:
 	_game_mode = get_tree().get_first_node_in_group("game_mode") as GameMode
 	collision_layer = 2  # players
-	collision_mask = 1 | 4 | 8  # world, structures, resources (players pass through each other)
+	# World, structures, resources, and the enemy team's gates. Players pass through each other.
+	collision_mask = 1 | 4 | 8 | GameData.gate_layer(1 - team)
 	var shape := CollisionShape3D.new()
 	var capsule := CapsuleShape3D.new()
 	capsule.radius = 0.4
@@ -73,17 +93,22 @@ func _ready() -> void:
 	shape.shape = capsule
 	shape.position.y = 0.9
 	add_child(shape)
-	_build_visuals()
+	if not Net.is_dedicated():
+		_build_visuals()
+	else:
+		_hand = Node3D.new()
+		add_child(_hand)
 	sync_pos = position
 	sync_yaw = rotation.y
-	if is_multiplayer_authority():
+	if is_local():
 		_build_camera()
 		_build_ghost()
 		Input.mouse_mode = Input.MOUSE_MODE_CAPTURED
 
 
+## True only for the human player sitting at this machine.
 func is_local() -> bool:
-	return is_multiplayer_authority()
+	return not is_bot and is_multiplayer_authority()
 
 
 func teleport(pos: Vector3) -> void:
@@ -99,6 +124,10 @@ func current_speed(sprinting: bool) -> float:
 	if mounted:
 		return speed * MOUNT_MULT
 	return speed
+
+
+func chest() -> Vector3:
+	return sync_pos + Vector3(0, 1.1, 0)
 
 
 # --- Simulation ------------------------------------------------------------------
@@ -121,16 +150,21 @@ func _owner_physics(delta: float) -> void:
 		velocity = Vector3.ZERO
 		_update_ghost()
 		return
+	var controlling := is_bot or Input.mouse_mode == Input.MOUSE_MODE_CAPTURED
+	if not is_bot:
+		move_input = Vector2.ZERO
+		wants_jump = false
+		wants_sprint = false
+		if controlling:
+			move_input = Input.get_vector("move_left", "move_right", "move_forward", "move_back")
+			wants_jump = Input.is_action_just_pressed("jump")
+			wants_sprint = Input.is_action_pressed("sprint")
 	if not is_on_floor():
 		velocity.y -= GRAVITY * delta
-	var controlling := Input.mouse_mode == Input.MOUSE_MODE_CAPTURED
-	var input := Vector2.ZERO
-	if controlling:
-		input = Input.get_vector("move_left", "move_right", "move_forward", "move_back")
-		if Input.is_action_just_pressed("jump") and is_on_floor():
-			velocity.y = JUMP_VELOCITY
-	var dir := (transform.basis * Vector3(input.x, 0.0, input.y)).normalized()
-	var speed := current_speed(controlling and Input.is_action_pressed("sprint"))
+	elif wants_jump:
+		velocity.y = JUMP_VELOCITY
+	var dir := (transform.basis * Vector3(move_input.x, 0.0, move_input.y)).normalized()
+	var speed := current_speed(wants_sprint)
 	velocity.x = dir.x * speed
 	velocity.z = dir.z * speed
 	move_and_slide()
@@ -142,13 +176,14 @@ func _owner_physics(delta: float) -> void:
 	sync_pos = position
 	sync_yaw = rotation.y
 
-	if controlling and Input.is_action_pressed("primary"):
-		_try_primary()
-	_update_ghost()
+	if not is_bot:
+		if controlling and Input.is_action_pressed("primary"):
+			_try_primary()
+		_update_ghost()
 
 
 func _process(_delta: float) -> void:
-	if not is_multiplayer_authority() or _game_mode == null:
+	if not is_local() or _game_mode == null:
 		return
 	# Keep the equipped item valid as the inventory changes.
 	var bar := _game_mode.hotbar_items()
@@ -163,7 +198,7 @@ func _process(_delta: float) -> void:
 
 
 func _unhandled_input(event: InputEvent) -> void:
-	if not is_multiplayer_authority():
+	if not is_local():
 		return
 	var captured := Input.mouse_mode == Input.MOUSE_MODE_CAPTURED
 	if event is InputEventMouseMotion and captured:
@@ -194,13 +229,13 @@ func select_slot(i: int) -> void:
 	if i >= 0 and i < bar.size():
 		hotbar_index = i
 		equipped = bar[i]
+		Sfx.play("click", -12.0)
 
 
 # --- Actions ---------------------------------------------------------------------
 
 func _try_primary() -> void:
-	var now := Time.get_ticks_msec() / 1000.0
-	if now < _next_action_time:
+	if _game_mode.clock < _next_action_time:
 		return
 	var def := GameData.item(equipped)
 	if def.is_empty():
@@ -210,11 +245,20 @@ func _try_primary() -> void:
 	var target := build_target()
 	if kind == "structure" and not GameData.can_build_at(target):
 		return
-	_next_action_time = now + float(def.get("cooldown", 1.0))
+	if kind == "ranged" and int(_game_mode.my_inventory.get(def["ammo"], 0)) <= 0:
+		_game_mode.message_received.emit("Out of arrows! Craft more in the menu (C).")
+		_next_action_time = _game_mode.clock + 1.0
+		return
+	_next_action_time = _game_mode.clock + float(def.get("cooldown", 1.0))
 	_game_mode.request(&"request_primary", [equipped, aim_direction(), target])
-	if kind in GameData.MELEE_KINDS:
-		_swing()
-		_remote_swing.rpc()
+	play_action_anim(kind)
+
+
+## Plays the swing/shoot animation here and on every other peer.
+func play_action_anim(kind: String) -> void:
+	if kind in GameData.MELEE_KINDS or kind == "ranged":
+		_swing(kind == "ranged")
+		_remote_swing.rpc(kind == "ranged")
 
 
 func aim_direction() -> Vector3:
@@ -241,18 +285,77 @@ func build_target() -> Vector3:
 
 
 @rpc("authority", "call_remote", "unreliable")
-func _remote_swing() -> void:
-	if not Net.is_dedicated():
-		_swing()
+func _remote_swing(ranged: bool) -> void:
+	_swing(ranged)
 
 
-func _swing() -> void:
+func _swing(ranged: bool) -> void:
+	if Net.is_dedicated() or _body == null:
+		return
 	if _swing_tween:
 		_swing_tween.kill()
 	_hand.rotation.x = 0.0
 	_swing_tween = create_tween()
-	_swing_tween.tween_property(_hand, "rotation:x", -1.5, 0.08)
-	_swing_tween.tween_property(_hand, "rotation:x", 0.0, 0.18)
+	if ranged:
+		_swing_tween.tween_property(_hand, "position:z", -0.05, 0.05)
+		_swing_tween.tween_property(_hand, "position:z", -0.15, 0.2)
+		Sfx.play_at("bow", global_position, -4.0)
+	else:
+		_swing_tween.tween_property(_hand, "rotation:x", -1.5, 0.08)
+		_swing_tween.tween_property(_hand, "rotation:x", 0.0, 0.18)
+		Sfx.play_at("swing", global_position, -6.0)
+
+
+# --- Feedback ----------------------------------------------------------------------
+
+func _on_damaged(amount: float) -> void:
+	if Net.is_dedicated() or _body == null:
+		return
+	Sfx.play_at("hit", global_position)
+	if _flash_material == null:
+		_flash_material = Visuals.mat(Color(1, 1, 1, 0.75), 2.0)
+	_body_mesh.material_overlay = _flash_material
+	if _flash_tween:
+		_flash_tween.kill()
+	_flash_tween = create_tween()
+	_flash_tween.tween_interval(0.09)
+	_flash_tween.tween_callback(func() -> void: _body_mesh.material_overlay = null)
+	# Floating damage number.
+	var label := Label3D.new()
+	label.text = str(roundi(amount))
+	label.billboard = BaseMaterial3D.BILLBOARD_ENABLED
+	label.font_size = 56
+	label.pixel_size = 0.006
+	label.outline_size = 10
+	label.modulate = Color(1, 0.85, 0.3) if not is_local() else Color(1, 0.3, 0.3)
+	label.no_depth_test = true
+	label.top_level = true
+	add_child(label)
+	label.global_position = global_position + Vector3(randf_range(-0.4, 0.4), 2.4, 0)
+	var t := label.create_tween().set_parallel()
+	t.tween_property(label, "global_position:y", label.global_position.y + 1.2, 0.8)
+	t.tween_property(label, "modulate:a", 0.0, 0.8).set_delay(0.3)
+	t.chain().tween_callback(label.queue_free)
+
+
+func _on_death() -> void:
+	if Net.is_dedicated() or _body == null:
+		return
+	Sfx.play_at("death", global_position)
+	# A toppling copy of the body that sinks into the ground.
+	var corpse := MeshInstance3D.new()
+	corpse.mesh = _body_mesh.mesh
+	corpse.material_override = _body_mesh.material_override
+	corpse.top_level = true
+	(get_parent().get_parent() as World).fx_root.add_child(corpse)
+	corpse.global_position = global_position + Vector3(0, 0.9, 0)
+	corpse.global_rotation = Vector3(0, rotation.y, 0)
+	var t := corpse.create_tween()
+	t.tween_property(corpse, "rotation:x", -PI / 2.0, 0.35).set_ease(Tween.EASE_IN)
+	t.parallel().tween_property(corpse, "position:y", 0.4, 0.35)
+	t.tween_interval(2.0)
+	t.tween_property(corpse, "position:y", -0.6, 1.0)
+	t.tween_callback(corpse.queue_free)
 
 
 # --- Visuals ---------------------------------------------------------------------
@@ -264,7 +367,8 @@ func _build_visuals() -> void:
 	var capsule := CapsuleMesh.new()
 	capsule.radius = 0.4
 	capsule.height = 1.8
-	_body.add_child(Visuals.mesh_instance(capsule, tc, Vector3(0, 0.9, 0)))
+	_body_mesh = Visuals.mesh_instance(capsule, tc, Vector3(0, 0.9, 0))
+	_body.add_child(_body_mesh)
 	# Visor shows which way they face.
 	_body.add_child(Visuals.box(Vector3(0.5, 0.12, 0.2), Color(0.15, 0.15, 0.18), Vector3(0, 1.5, -0.33)))
 
@@ -282,6 +386,7 @@ func _build_visuals() -> void:
 	label.outline_size = 8
 	label.modulate = tc.lerp(Color.WHITE, 0.5)
 	label.position.y = 2.25
+	label.visible = not is_local()  # your own name would float in front of the camera
 	_body.add_child(label)
 
 	_horse = Node3D.new()
@@ -295,6 +400,8 @@ func _build_visuals() -> void:
 
 
 func _refresh_weapon() -> void:
+	if _weapon == null:
+		return
 	var def := GameData.item(equipped)
 	var kind: String = def.get("kind", "fists")
 	if kind == "fists":
@@ -302,10 +409,14 @@ func _refresh_weapon() -> void:
 		return
 	_weapon.visible = true
 	var m := BoxMesh.new()
+	_weapon.rotation = Vector3.ZERO
 	match kind:
 		"weapon", "tool":
 			m.size = Vector3(0.1, 0.1, 1.0)
 			_weapon.position = Vector3(0, 0, -0.45)
+		"ranged":
+			m.size = Vector3(0.07, 1.2, 0.07)
+			_weapon.position = Vector3(-0.1, 0.15, -0.4)
 		"structure":
 			m.size = Vector3(0.35, 0.35, 0.35)
 			_weapon.position = Vector3(0, 0, -0.2)
@@ -317,6 +428,8 @@ func _refresh_weapon() -> void:
 
 
 func _refresh_mount() -> void:
+	if _horse == null:
+		return
 	_horse.visible = mounted
 	_body.position.y = 0.7 if mounted else 0.0
 

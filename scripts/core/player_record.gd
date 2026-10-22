@@ -14,6 +14,15 @@ var captures := 0
 var gather_mult := 1.0
 var bonus_health := 0.0
 var next_action_time := 0.0
+var protected_until := 0.0
+## Server speed check: last position we accepted and when.
+var last_valid_pos := Vector3.ZERO
+var last_move_check := 0.0
+
+
+var is_bot: bool:
+	get:
+		return peer_id < 0
 
 
 func _init(p_peer := 0, p_name := "", p_team := 0) -> void:

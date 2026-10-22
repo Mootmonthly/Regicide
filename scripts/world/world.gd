@@ -3,12 +3,14 @@ extends Node3D
 ## Root of a match. Builds the static arena, owns the spawners, generates resource
 ## nodes from the server's seed, and relays resource changes and visual effects.
 
-const PLAYER_SCENE := preload("res://scenes/player.tscn")
+## Loaded at runtime (not preloaded) because player.gd refers back to World.
+const PLAYER_SCENE_PATH := "res://scenes/player.tscn"
 
 var map_seed := 0
 var resource_nodes: Array[ResourceNode] = []
 var crown_nodes: Array[Crown] = []
 var hud: Hud
+var _player_scene: PackedScene
 
 @onready var game_mode: GameMode = $GameMode
 @onready var player_spawner: MultiplayerSpawner = $PlayerSpawner
@@ -75,10 +77,13 @@ func local_player() -> Player:
 # --- Spawning (runs on every peer with the same data) ---------------------
 
 func _spawn_player(data: Dictionary) -> Node:
-	var p: Player = PLAYER_SCENE.instantiate()
+	if _player_scene == null:
+		_player_scene = load(PLAYER_SCENE_PATH)
+	var p: Player = _player_scene.instantiate()
 	p.peer_id = data["peer_id"]
 	p.team = data["team"]
 	p.display_name = data["name"]
+	p.is_bot = data.get("bot", false)
 	p.name = str(p.peer_id)
 	p.position = data["pos"]
 	return p
@@ -144,12 +149,58 @@ func _res_reset() -> void:
 # --- Effects (cosmetic, fire-and-forget) -------------------------------------
 
 @rpc("authority", "call_local", "unreliable")
+func structure_health(structure_name: String, fraction: float) -> void:
+	var s := structures_root.get_node_or_null(structure_name) as Structure
+	if s:
+		s.set_health_fraction(fraction)
+
+
+## An arrow following the same arc the server simulated.
+@rpc("authority", "call_local", "unreliable")
+func fx_arrow(from: Vector3, velocity: Vector3, duration: float) -> void:
+	if Net.is_dedicated():
+		return
+	var m := BoxMesh.new()
+	m.size = Vector3(0.05, 0.05, 0.8)
+	var arrow := Visuals.mesh_instance(m, Color(0.85, 0.8, 0.65))
+	fx_root.add_child(arrow)
+	arrow.global_position = from
+	var g := Vector3(0, -GameData.ARROW_GRAVITY, 0)
+	var t := arrow.create_tween()
+	t.tween_method(func(time: float) -> void:
+		var pos := from + velocity * time + 0.5 * g * time * time
+		var vel := velocity + g * time
+		arrow.global_position = pos
+		if vel.length_squared() > 0.01:
+			arrow.look_at(pos + vel), 0.0, duration, duration)
+	t.tween_interval(1.5)  # leave it stuck in the ground for a moment
+	t.tween_callback(arrow.queue_free)
+
+
+## Little flying chips when something is hit.
+func debris(pos: Vector3, color: Color, count := 4) -> void:
+	if Net.is_dedicated():
+		return
+	for i in count:
+		var chip := Visuals.box(Vector3.ONE * randf_range(0.1, 0.2), color)
+		fx_root.add_child(chip)
+		chip.global_position = pos
+		var dir := Vector3(randf_range(-1, 1), randf_range(0.6, 1.4), randf_range(-1, 1))
+		var t := chip.create_tween().set_parallel()
+		t.tween_property(chip, "global_position", pos + dir * 1.2, 0.35).set_ease(Tween.EASE_OUT)
+		t.tween_property(chip, "rotation", Vector3(randf() * 6, randf() * 6, 0), 0.35)
+		t.chain().tween_property(chip, "global_position:y", 0.05, 0.25).set_ease(Tween.EASE_IN)
+		t.chain().tween_interval(0.6)
+		t.chain().tween_callback(chip.queue_free)
+
+@rpc("authority", "call_local", "unreliable")
 func fx_bolt(from: Vector3, to: Vector3) -> void:
 	if Net.is_dedicated():
 		return
 	var m := BoxMesh.new()
 	m.size = Vector3(0.08, 0.08, 1.2)
 	_projectile(Visuals.mesh_instance(m, Color(0.35, 0.25, 0.15)), from, to, 60.0)
+	Sfx.play_at("bolt", from)
 
 
 @rpc("authority", "call_local", "unreliable")
@@ -160,7 +211,9 @@ func fx_fireball(from: Vector3, to: Vector3, radius: float) -> void:
 	s.radius = 0.35
 	s.height = 0.7
 	var travel := _projectile(Visuals.mesh_instance(s, Color(1.0, 0.5, 0.1), Vector3.ZERO, 3.0), from, to, 35.0)
+	Sfx.play_at("fireball", from)
 	await get_tree().create_timer(travel).timeout
+	Sfx.play_at("boom", to, 4.0)
 	var boom_mesh := SphereMesh.new()
 	boom_mesh.radius = 1.0
 	boom_mesh.height = 2.0

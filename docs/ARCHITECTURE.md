@@ -7,10 +7,11 @@ headless server or a host who also plays.
 
 | State | Owner | How it reaches others |
 | --- | --- | --- |
-| Player position, facing, equipped item | The player's own peer | `OwnerSync` (MultiplayerSynchronizer, 20 Hz) |
+| Player position, facing, equipped item | The player's own peer (server for bots) | `OwnerSync` (MultiplayerSynchronizer, 20 Hz) |
 | Health, alive, crown carried, mounted | Server | `ServerSync` (on change) |
 | Inventory, gold, unlocks | Server | `GameMode._private` RPC to that player only |
-| Scores, crown states, match over | Server | `GameMode` broadcast RPCs |
+| Scores, crown states, scoreboard, match over | Server | `GameMode` broadcast RPCs |
+| Hit effects, arrows, structure damage | Server | Unreliable `World` RPCs; damage numbers come from the synced health change |
 | Players, structures exist | Server | `MultiplayerSpawner` with custom spawn functions |
 | Resource nodes | Generated locally from a seed | Only `(index, amount)` changes are sent |
 
@@ -18,6 +19,20 @@ Movement is client-authoritative for responsiveness. **Everything else is a requ
 clients call `GameMode.request(...)` (`request_primary`, `request_craft`,
 `request_unlock`), and the server checks ownership, cooldowns, range and cost before
 changing anything. The host's own requests take the same path, run as local calls.
+
+## Bots
+
+Bots are ordinary `Player` nodes with negative peer ids, owned by the server. A
+`BotBrain` child (server only) writes the same movement intent (`move_input`,
+`wants_sprint`, `wants_jump`) a keyboard would and acts through `GameMode.perform_*()` —
+the same functions the human RPC wrappers call. Messages to negative peer ids are
+silently dropped.
+
+## Time
+
+`GameMode.clock` is game time advanced every physics tick on every peer. All cooldowns,
+crown timers and bot waves use it (not wall-clock time), which is what lets the soak test
+fast-forward a 10-minute match with `--fixed-fps`.
 
 ## Join flow
 
@@ -37,12 +52,15 @@ changing anything. The host's own requests take the same path, run as local call
   replicated state, with signals for the HUD.
 - `scripts/world/world.gd` — arena, lookups, spawners, resource sync, effects.
 - `scripts/player/player.gd` — movement, camera, input → requests, visuals.
+- `scripts/game/bot_brain.gd` — bot roles, decisions, steering, actions.
+- `autoload/sfx.gd` — sound effects synthesized at startup (no audio files).
 - `scripts/core/crown_rules.gd`, `inventory.gd` — pure logic, unit tested.
 
 ## Physics layers
 
-1 world · 2 players · 3 structures · 4 resources. Players don't collide with each other
-(100 bodies in chokepoints would gridlock).
+1 world · 2 players · 3 structures · 4 resources · 5 Azure gates · 6 Crimson gates.
+Players collide with the *enemy* team's gate layer only. Players don't collide with each
+other (100 bodies in chokepoints would gridlock). Spike traps have no collision.
 
 ## Scaling notes for 100 players
 

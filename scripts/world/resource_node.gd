@@ -59,13 +59,29 @@ func _ready() -> void:
 
 
 func set_amount(value: int) -> void:
+	var old := amount
 	amount = clampi(value, 0, max_amount)
+	if amount < old and is_inside_tree() and not Net.is_dedicated():
+		_hit_feedback()
 	var alive := amount > 0
 	visible = alive
 	if _shape:
 		_shape.set_deferred("disabled", not alive)
 	if _visual and max_amount > 0:
 		_visual.scale = Vector3.ONE * lerpf(0.6, 1.0, float(amount) / max_amount)
+
+
+func _hit_feedback() -> void:
+	var colors := {"wood": Color(0.5, 0.34, 0.18), "stone": Color(0.55, 0.55, 0.57), "iron": Color(0.75, 0.42, 0.2), "magic_ore": Color(0.7, 0.35, 1.0)}
+	var world := get_parent().get_parent() as World
+	if world:
+		world.debris(global_position + Vector3(0, 1.0, 0), colors.get(res_type, Color.GRAY))
+	Sfx.play_at("chop" if res_type == "wood" else "mine", global_position, -3.0)
+	# Wobble.
+	if _visual:
+		var t := create_tween()
+		t.tween_property(_visual, "rotation:z", 0.08, 0.05)
+		t.tween_property(_visual, "rotation:z", 0.0, 0.12)
 
 
 static func _mesh(kind: String) -> Mesh:

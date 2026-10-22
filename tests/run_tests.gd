@@ -52,6 +52,10 @@ func _test_game_data() -> void:
 			"tool", "weapon":
 				for key in ["damage", "range", "cooldown", "gather"]:
 					check(def.has(key), "%s has %s" % [id, key])
+			"ranged":
+				for key in ["damage", "cooldown", "speed", "range", "ammo"]:
+					check(def.has(key), "%s has %s" % [id, key])
+				check(GameData.is_item(def.get("ammo", "")), "%s ammo exists" % id)
 			"structure":
 				check(def.get("size") is Vector3 and float(def.get("health", 0)) > 0, "%s has size and health" % id)
 			"consumable":

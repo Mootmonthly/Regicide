@@ -7,7 +7,7 @@ cd "$(dirname "$0")/.."
 LOG_DIR="$(mktemp -d)"
 PORT=$((25000 + RANDOM % 5000))
 
-"$GODOT" --headless --path . --quit-after 600 -- --server --port "$PORT" >"$LOG_DIR/server.log" 2>&1 &
+"$GODOT" --headless --path . --quit-after 600 -- --server --port "$PORT" --bots 10 >"$LOG_DIR/server.log" 2>&1 &
 SERVER=$!
 sleep 2
 "$GODOT" --headless --path . --quit-after 300 -- --join 127.0.0.1 --port "$PORT" --name Alice >"$LOG_DIR/alice.log" 2>&1 &

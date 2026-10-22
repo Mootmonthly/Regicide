@@ -21,6 +21,7 @@ func _ready() -> void:
 	Net.mode = Net.Mode.HOST
 	Net.port = 26000 + randi() % 2000
 	Net.player_name = "Tester"
+	Net.team_fill = 0
 	world = load("res://scenes/world.tscn").instantiate()
 	add_child(world)
 	gm = world.game_mode
@@ -170,6 +171,10 @@ func _run() -> void:
 	check(gm.crowns[1].state == CrownRules.State.CARRIED, "stole it again")
 	_place(me, Vector3(10, 0, -100), Vector3.ZERO)
 	await _frames(2)
+	rec.protected_until = gm.clock + 5.0
+	gm.damage_player(1, 999.0, ENEMY)
+	check(me.alive, "spawn protection blocks damage")
+	rec.protected_until = 0.0
 	gm.damage_player(1, 999.0, ENEMY)
 	check(not me.alive and gm.crowns[1].state == CrownRules.State.DROPPED, "dying drops the crown")
 	check(gm.records[ENEMY].gold == GameData.GOLD_PER_KILL, "enemy got kill gold")
@@ -177,6 +182,95 @@ func _run() -> void:
 	enemy.teleport(gm.crowns[1].position)
 	await _frames(3)
 	check(gm.crowns[1].state == CrownRules.State.HOME, "owner returns a dropped crown by touching it")
+
+	# --- Bows ---
+	gm._respawn(1)
+	rec.protected_until = 0.0
+	await _frames(2)
+	gm._respawn(ENEMY)
+	gm.records[ENEMY].protected_until = 0.0
+	rec.inventory.add("shortbow", 1)
+	_place(me, Vector3(-60, 0, 10), Vector3(-60, 0, 30))
+	enemy.teleport(Vector3(-60, 0, 30))
+	await _frames(3)
+	_ready_to_act(1)
+	gm.request_primary("shortbow", Vector3(0, 0.05, 1).normalized(), Vector3.ZERO)
+	check(is_equal_approx(enemy.health, enemy.max_health), "bow without arrows does nothing")
+	rec.inventory.add("arrow", 3)
+	var from := me.sync_pos + Vector3(0, 1.5, 0)
+	var flight := 20.0 / 55.0
+	var aim := (enemy.chest() + Vector3(0, 0.5 * GameData.ARROW_GRAVITY * flight * flight, 0) - from).normalized()
+	_ready_to_act(1)
+	gm.request_primary("shortbow", aim, Vector3.ZERO)
+	check(enemy.health < enemy.max_health, "arrow hits at 20m (health %s)" % enemy.health)
+	check(rec.inventory.count("arrow") == 2, "shooting uses an arrow")
+	_ready_to_act(1)
+	gm.request_primary("shortbow", Vector3(0, 0, -1), Vector3.ZERO)
+	check(rec.inventory.count("arrow") == 1, "missed shots still use arrows")
+	rec.inventory.add("wood", 10)
+	rec.inventory.add("stone", 10)
+	gm.request_craft("arrow")
+	check(rec.inventory.count("arrow") == 6, "arrow recipe yields 5")
+
+	# --- Gates & traps ---
+	rec.inventory.add("wooden_gate", 1)
+	rec.inventory.add("spike_trap", 1)
+	rec.unlocks["spike_trap"] = true
+	dir = _place(me, Vector3(60, 0, 10), Vector3(60, 0, 0))
+	await _frames(2)
+	_ready_to_act(1)
+	check(gm.perform_primary(1, "wooden_gate", dir, Vector3(60, 0, 5)), "gate placed")
+	var gate: Structure = null
+	for s in world.get_structures():
+		if s.is_gate():
+			gate = s
+	check(gate != null and gate.collision_layer == GameData.gate_layer(0), "gate is on its team's gate layer")
+	check(me.collision_mask & gate.collision_layer == 0, "own team passes through the gate")
+	check(enemy.collision_mask & gate.collision_layer != 0, "enemies are blocked by the gate")
+	_ready_to_act(1)
+	check(gm.perform_primary(1, "spike_trap", dir, Vector3(66, 0, 5)), "trap placed")
+	enemy.teleport(Vector3(66, 0, 5))
+	var before := enemy.health
+	for i in 60:
+		await get_tree().physics_frame
+	check(enemy.health < before, "spike trap hurts enemies standing on it")
+
+	# --- Speed check ---
+	_place(me, Vector3(0, 0, 0), Vector3(0, 0, 10))
+	gm._teleport_player(1, Vector3(0, 0, 0))
+	await _frames(40)
+	me.teleport(Vector3(80, 0, -100))  # a cheater's "teleport"
+	await _frames(40)
+	check(GameData.flat_distance(me.position, Vector3.ZERO) < 5.0, "server snaps back impossible movement")
+
+	# --- Scoreboard ---
+	await _frames(70)
+	check(gm.scoreboard.size() == 2, "scoreboard lists both players")
+
+	# --- Bots ---
+	gm.team_fill = 3
+	gm._balance_bots()
+	await _frames(5)
+	var bots := 0
+	for r: PlayerRecord in gm.records.values():
+		if r.is_bot:
+			bots += 1
+	check(bots == 4, "bots fill each team to 3 (got %d)" % bots)
+	check(world.get_players().size() == 6, "bot players spawned")
+	var bot := world.get_player(-1)
+	check(bot != null and bot.has_node("Brain"), "bots have brains")
+	var start := bot.global_position
+	for i in 120:
+		await get_tree().physics_frame
+	check(bot.global_position.distance_to(start) > 2.0, "bots move on their own")
+	gm.team_fill = 0
+	gm._balance_bots()
+	await _frames(2)
+	check(world.get_players().size() == 2, "removing bots never removes humans")
+
+	# --- Sound synthesis (normally skipped headless) ---
+	Sfx._build_sounds()
+	check(Sfx._streams.size() >= 15, "sound effects synthesize")
 
 	# --- Win & reset ---
 	gm.scores[0] = GameData.CAPTURES_TO_WIN - 1
