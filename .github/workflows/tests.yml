@@ -24,5 +24,5 @@ jobs:
         run: timeout 300 godot --headless --path . res://tests/gameplay_test.tscn
       - name: Multiplayer smoke test
         run: GODOT=godot timeout 300 tests/smoke.sh
-      - name: Bot match soak (25v25, 5 game-minutes, fast-forwarded)
-        run: timeout 600 godot --headless --path . --fixed-fps 60 res://tests/bot_soak.tscn -- --minutes 5 --bots 25
+      - name: Bot match soak (25v25, 7 game-minutes, fast-forwarded)
+        run: timeout 600 godot --headless --path . --fixed-fps 60 res://tests/bot_soak.tscn -- --minutes 7 --bots 25

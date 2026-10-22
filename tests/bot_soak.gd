@@ -21,6 +21,8 @@ func _ready() -> void:
 			minutes = float(args[i + 1])
 		if args[i] == "--bots":
 			bots = int(args[i + 1])
+		if args[i] == "--flat":
+			Terrain.force_flat = true
 	Net.mode = Net.Mode.DEDICATED
 	Net.port = 27500 + randi() % 1000
 	Net.team_fill = bots

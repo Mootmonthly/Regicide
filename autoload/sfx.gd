@@ -94,6 +94,16 @@ func _build_sounds() -> void:
 		return _noise() * sin(PI * t / d) * 0.7, 0.12)
 	_streams["boom"] = _make(0.7, func(t: float, _d: float) -> float:
 		return (_noise() * 0.8 + sin(TAU * 50.0 * t) * 0.6) * _decay(t, 5.0), 0.2)
+	_streams["drawbridge"] = _make(1.2, func(t: float, _d: float) -> float:
+		# Chain rattle over a creaking groan.
+		var rattle := _noise() * (0.5 + 0.5 * sin(TAU * 18.0 * t)) * 0.35
+		return (rattle + sin(TAU * (70.0 + 20.0 * sin(TAU * 1.5 * t)) * t) * 0.3) * minf(1.0, (1.2 - t) * 3.0), 0.5)
+	_streams["catapult"] = _make(0.5, func(t: float, _d: float) -> float:
+		return (sin(TAU * 60.0 * t) * 0.8 + _noise() * 0.4) * _decay(t, 9.0), 0.4)
+	_streams["ram"] = _make(0.6, func(t: float, _d: float) -> float:
+		return (sin(TAU * 45.0 * t) * 0.9 + _noise() * 0.5) * _decay(t, 6.0), 0.3)
+	_streams["repair"] = _make(0.15, func(t: float, _d: float) -> float:
+		return (sin(TAU * 800.0 * t) * 0.4 + _noise() * 0.2) * _decay(t, 30.0))
 	_streams["hitmarker"] = _make(0.05, func(t: float, _d: float) -> float:
 		return sin(TAU * 2200.0 * t) * 0.35 * _decay(t, 60.0))
 	_streams["click"] = _make(0.04, func(t: float, _d: float) -> float:

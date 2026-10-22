@@ -17,16 +17,16 @@ const THINK_INTERVAL := 0.3
 ## Attackers mostly ignore fights and push for the crown.
 const AGGRO := {Role.GATHERER: 12.0, Role.ATTACKER: 7.0, Role.DEFENDER: 22.0}
 
-const ATTACK_AFTER := 100.0  ## attackers go for the crown by now even if poorly armed
-const GATHERERS_JOIN_AFTER := 240.0
+const ATTACK_AFTER := 120.0  ## attackers go for the crown by now even if poorly armed
+const GATHERERS_JOIN_AFTER := 300.0
 ## Attackers rally near the middle, then charge together for WAVE_CHARGE seconds
 ## out of every WAVE_PERIOD, so they hit the enemy base as a group.
-const WAVE_PERIOD := 70.0
-const WAVE_CHARGE := 40.0
+const WAVE_PERIOD := 110.0
+const WAVE_CHARGE := 75.0
 ## Distances along the attack axis: + is our half, - is theirs.
-const RALLY_DEPTH := 55.0
-const FLANK_DEPTH := -105.0
-const LANE_X := 70.0
+const RALLY_DEPTH := 110.0
+const FLANK_DEPTH := -210.0
+const LANE_X := 140.0  # the river fords
 
 ## [item, how many to keep] in priority order.
 const WISHLIST := {
@@ -137,9 +137,9 @@ func _think() -> void:
 	if player.carrying_crown >= 0:
 		# Run home along the flank first, away from the crowd in the middle.
 		var depth := me.z * GameData.team_sign(player.team)
-		if depth < -60.0 and absf(me.x) < LANE_X - 15.0:
+		if depth < -120.0 and absf(me.x) < LANE_X - 25.0:
 			var lane := signf(me.x) if absf(me.x) > 1.0 else _lane()
-			_go(Task.CARRY, Vector3(lane * LANE_X, 0, -40.0 * GameData.team_sign(player.team)), 8.0)
+			_go(Task.CARRY, Vector3(lane * LANE_X, 0, -80.0 * GameData.team_sign(player.team)), 8.0)
 		else:
 			_go(Task.CARRY, GameData.crown_pos(player.team), 0.5)
 		return
@@ -147,10 +147,10 @@ func _think() -> void:
 		var thief := world.get_player(own.carrier)
 		# Attackers hunt the thief anywhere (this also breaks standoffs where both
 		# crowns are stolen); everyone else only if it's close.
-		if thief and (role == Role.ATTACKER or me.distance_to(thief.sync_pos) < 70.0):
+		if thief and (role == Role.ATTACKER or me.distance_to(thief.sync_pos) < 120.0):
 			_engage(thief)
 			return
-	if own.state == CrownRules.State.DROPPED and me.distance_to(own.position) < 90.0:
+	if own.state == CrownRules.State.DROPPED and me.distance_to(own.position) < 160.0:
 		_go(Task.RETURN_CROWN, own.position, 0.3)
 		return
 
@@ -164,7 +164,7 @@ func _think() -> void:
 	if foe:
 		_engage(foe)
 		return
-	if theirs.state == CrownRules.State.DROPPED and me.distance_to(theirs.position) < 60.0:
+	if theirs.state == CrownRules.State.DROPPED and me.distance_to(theirs.position) < 100.0:
 		_go(Task.STEAL, theirs.position, 0.3)
 		return
 	if task == Task.SIEGE and target != null and is_instance_valid(target) and not target.is_queued_for_deletion():

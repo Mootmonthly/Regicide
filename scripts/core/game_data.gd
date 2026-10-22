@@ -35,10 +35,11 @@ const GOLD_TEAM_CAPTURE := 75
 const GOLD_PER_RETURN := 25
 
 # --- Map: team 0 lives at +Z, team 1 at -Z, mirrored through the origin ----
-const MAP_WIDTH := 200.0
-const MAP_LENGTH := 360.0
-const BASE_Z := 150.0
-const SPAWN_Z := 168.0
+## Sized for 100 players: ~600 m between crowns (a minute's sprint, 40 s on a horse).
+const MAP_WIDTH := 400.0
+const MAP_LENGTH := 720.0
+const BASE_Z := 300.0
+const SPAWN_Z := 336.0
 const BASE_CLEAR_RADIUS := 22.0
 
 const TEAM_NAMES := ["Azure", "Crimson"]
@@ -46,7 +47,7 @@ const TEAM_COLORS := [Color(0.25, 0.45, 0.95), Color(0.9, 0.22, 0.2)]
 
 # --- Raw resources gathered from the map ------------------------------------
 const RESOURCES := {
-	"wood": {"name": "Wood", "node_amount": 40, "respawn": 60.0},
+	"wood": {"name": "Wood", "node_amount": 60, "respawn": 90.0},
 	"stone": {"name": "Stone", "node_amount": 40, "respawn": 75.0},
 	"iron": {"name": "Iron", "node_amount": 25, "respawn": 90.0},
 	"magic_ore": {"name": "Magic Ore", "node_amount": 12, "respawn": 120.0},
@@ -127,75 +128,126 @@ const ITEMS := {
 		"color": Color(0.7, 0.6, 0.45),
 		"desc": "5 arrows for bows and crossbows.",
 	},
-	# Building pieces. "piece" picks the grid slot type (see BuildGrid). Pieces are not
-	# crafted: in build mode (Q) the recipe is paid straight from your resources.
+	# Building pieces. "piece" picks the grid slot type (see BuildGrid); "category" picks
+	# the build-mode page (Q cycles pages). Pieces are paid from resources on placement.
+	# "upgrade" names the stone version a wood piece can be upgraded to in place.
 	"wood_wall": {
-		"name": "Wood Wall", "kind": "structure", "piece": "wall", "unlock_cost": 0,
-		"recipe": {"wood": 8}, "health": 300.0, "thickness": 0.4,
+		"name": "Wood Wall", "kind": "structure", "piece": "wall", "category": "walls", "unlock_cost": 0,
+		"recipe": {"wood": 8}, "health": 300.0, "thickness": 0.4, "upgrade": "stone_wall",
 		"color": Color(0.55, 0.38, 0.2),
 		"desc": "Cheap palisade wall.",
 	},
 	"stone_wall": {
-		"name": "Stone Wall", "kind": "structure", "piece": "wall", "unlock_cost": 0,
+		"name": "Stone Wall", "kind": "structure", "piece": "wall", "category": "walls", "unlock_cost": 0,
 		"recipe": {"stone": 10}, "health": 800.0, "thickness": 0.6,
 		"color": Color(0.6, 0.6, 0.62),
 		"desc": "Sturdy masonry wall.",
 	},
+	"wood_half_wall": {
+		"name": "Wood Half Wall", "kind": "structure", "piece": "half", "category": "walls", "unlock_cost": 0,
+		"recipe": {"wood": 4}, "health": 160.0, "thickness": 0.4, "upgrade": "stone_half_wall",
+		"color": Color(0.58, 0.4, 0.22),
+		"desc": "Waist-high cover you can shoot over. Can't hold anything up.",
+	},
+	"stone_half_wall": {
+		"name": "Stone Half Wall", "kind": "structure", "piece": "half", "category": "walls", "unlock_cost": 0,
+		"recipe": {"stone": 5}, "health": 420.0, "thickness": 0.6,
+		"color": Color(0.62, 0.62, 0.64),
+		"desc": "Sturdy waist-high cover.",
+	},
+	"battlement": {
+		"name": "Battlement", "kind": "structure", "piece": "half", "category": "walls", "unlock_cost": 0,
+		"recipe": {"stone": 8}, "health": 550.0, "thickness": 0.6, "battlement": true,
+		"color": Color(0.58, 0.58, 0.6),
+		"desc": "Crenellated parapet for wall-tops: duck behind the merlons, shoot through the gaps.",
+	},
+	"wood_window": {
+		"name": "Wood Window Wall", "kind": "structure", "piece": "wall", "category": "walls", "unlock_cost": 0,
+		"recipe": {"wood": 7}, "health": 240.0, "thickness": 0.4, "window": true, "upgrade": "stone_window",
+		"color": Color(0.55, 0.38, 0.2),
+		"desc": "Wall with a big window to see and shoot through.",
+	},
+	"stone_window": {
+		"name": "Stone Window Wall", "kind": "structure", "piece": "wall", "category": "walls", "unlock_cost": 0,
+		"recipe": {"stone": 9}, "health": 600.0, "thickness": 0.6, "window": true,
+		"color": Color(0.6, 0.6, 0.62),
+		"desc": "Stone wall with a big window.",
+	},
 	"arrow_slit": {
-		"name": "Arrow Slit Wall", "kind": "structure", "piece": "wall", "unlock_cost": 0,
+		"name": "Arrow Slit Wall", "kind": "structure", "piece": "wall", "category": "walls", "unlock_cost": 0,
 		"recipe": {"stone": 12}, "health": 650.0, "thickness": 0.6, "slit": true,
 		"color": Color(0.55, 0.55, 0.58),
 		"desc": "Stone wall with a chest-high gap to shoot arrows through.",
 	},
 	"wood_door": {
-		"name": "Wood Door", "kind": "structure", "piece": "door", "unlock_cost": 0,
+		"name": "Wood Door", "kind": "structure", "piece": "door", "category": "walls", "unlock_cost": 0,
 		"recipe": {"wood": 12}, "health": 350.0, "thickness": 0.4,
 		"color": Color(0.62, 0.45, 0.25),
 		"desc": "A wall your own team can walk through.",
 	},
+	"drawbridge": {
+		"name": "Drawbridge", "kind": "structure", "piece": "drawbridge", "category": "walls", "unlock_cost": 0,
+		"recipe": {"wood": 20, "iron": 4}, "health": 700.0,
+		"color": Color(0.5, 0.36, 0.2),
+		"desc": "Raised, it blocks everyone. Your team lowers it (E) into a 6 m bridge across the river's narrows.",
+	},
 	"wood_floor": {
-		"name": "Wood Floor", "kind": "structure", "piece": "floor", "unlock_cost": 0,
-		"recipe": {"wood": 6}, "health": 250.0,
+		"name": "Wood Floor", "kind": "structure", "piece": "floor", "category": "floors", "unlock_cost": 0,
+		"recipe": {"wood": 6}, "health": 250.0, "upgrade": "stone_floor",
 		"color": Color(0.6, 0.45, 0.28),
-		"desc": "Floor or foundation. Rests on walls below, or reaches one cell out from them.",
+		"desc": "Floor, foundation or bridge deck. Rests on walls or the ground, reaches one cell out.",
 	},
 	"stone_floor": {
-		"name": "Stone Floor", "kind": "structure", "piece": "floor", "unlock_cost": 0,
+		"name": "Stone Floor", "kind": "structure", "piece": "floor", "category": "floors", "unlock_cost": 0,
 		"recipe": {"stone": 8}, "health": 600.0,
 		"color": Color(0.5, 0.5, 0.52),
 		"desc": "Sturdy floor or foundation.",
 	},
 	"wood_stairs": {
-		"name": "Wood Stairs", "kind": "structure", "piece": "stairs", "unlock_cost": 0,
+		"name": "Wood Stairs", "kind": "structure", "piece": "stairs", "category": "floors", "unlock_cost": 0,
 		"recipe": {"wood": 8}, "health": 250.0,
 		"color": Color(0.58, 0.42, 0.24),
 		"desc": "Climbs one level (3 m). Build them on the ground or on a floor.",
 	},
 	"wood_roof": {
-		"name": "Wood Roof", "kind": "structure", "piece": "roof", "unlock_cost": 0,
+		"name": "Wood Roof", "kind": "structure", "piece": "roof", "category": "floors", "unlock_cost": 0,
 		"recipe": {"wood": 6}, "health": 250.0,
 		"color": Color(0.5, 0.22, 0.16),
 		"desc": "Sloped roof. Rests on walls. Shelters you from arrows and fireballs.",
 	},
 	"ladder": {
-		"name": "Ladder", "kind": "structure", "piece": "ladder", "unlock_cost": 0,
+		"name": "Ladder", "kind": "structure", "piece": "ladder", "category": "floors", "unlock_cost": 0,
 		"recipe": {"wood": 4}, "health": 120.0,
 		"color": Color(0.65, 0.5, 0.3),
 		"desc": "Lean it on any wall, even the enemy's, and climb with W. Stack them to go higher.",
 	},
 	"spike_trap": {
-		"name": "Spike Trap", "kind": "structure", "piece": "free", "unlock_cost": 100,
+		"name": "Spike Trap", "kind": "structure", "piece": "free", "category": "siege", "unlock_cost": 100,
 		"recipe": {"wood": 6, "iron": 3}, "health": 120.0,
 		"trap": {"damage": 12.0, "interval": 0.75},
 		"color": Color(0.5, 0.5, 0.52),
 		"desc": "Hurts enemies standing on it. Doesn't block movement.",
 	},
 	"ballista": {
-		"name": "Ballista", "kind": "structure", "piece": "free", "unlock_cost": 300,
+		"name": "Ballista", "kind": "structure", "piece": "free", "category": "siege", "unlock_cost": 300,
 		"recipe": {"wood": 25, "iron": 10}, "health": 400.0,
 		"turret": {"range": 32.0, "damage": 22.0, "cooldown": 2.5},
 		"color": Color(0.45, 0.3, 0.15),
 		"desc": "Automatically fires bolts at nearby enemies. Put it on a tower.",
+	},
+	"catapult": {
+		"name": "Catapult", "kind": "structure", "piece": "free", "category": "siege", "unlock_cost": 250,
+		"recipe": {"wood": 30, "stone": 10, "iron": 5}, "health": 500.0,
+		"catapult": {"cooldown": 6.0, "speed": 24.0, "damage": 35.0, "structure_damage": 260.0, "radius": 3.2, "ammo": {"stone": 5}},
+		"color": Color(0.48, 0.33, 0.18),
+		"desc": "Stand next to it and press E to hurl a boulder where you aim (5 stone a shot). Wrecks walls.",
+	},
+	"battering_ram": {
+		"name": "Battering Ram", "kind": "structure", "piece": "vehicle", "category": "siege", "unlock_cost": 200,
+		"recipe": {"wood": 30, "iron": 10}, "health": 750.0,
+		"ram": {"speed": 2.4, "damage": 240.0, "interval": 2.0, "turn_rate": 0.7},
+		"color": Color(0.42, 0.3, 0.18),
+		"desc": "Push it from behind (walk into it) to roll it forward; it batters enemy structures in front.",
 	},
 	# Consumables
 	"health_potion": {
@@ -237,6 +289,9 @@ const ITEMS := {
 
 const ITEM_KINDS := ["tool", "weapon", "ranged", "ammo", "structure", "consumable"]
 const MELEE_KINDS := ["fists", "tool", "weapon"]
+## Build-mode pages, cycled with Q.
+const BUILD_CATEGORIES := ["walls", "floors", "siege"]
+const BUILD_CATEGORY_NAMES := {"walls": "Walls & gates", "floors": "Floors, stairs & roofs", "siege": "Defenses & siege"}
 
 
 const BOT_NAMES := [

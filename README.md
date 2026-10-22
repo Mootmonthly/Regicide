@@ -1,12 +1,14 @@
 # Regicide
 
 A medieval multiplayer arena battler built on **Godot 4.4**. Two teams of up to 50
-spawn with nothing, gather wood, stone, iron and magic ore, build defenses, craft
-weapons, and fight to steal the enemy's crown and carry it back to their own.
-Players build real forts on a snap grid: walls, doors, arrow slits, floors, stairs,
-roofs, and ladders for scaling the enemy's walls.
+spawn with nothing on a 400 × 720 m map of hills, forests and a winding river. They
+gather wood, stone, iron and magic ore, build forts on a snap grid, craft weapons, and
+fight to steal the enemy's crown and carry it back to their own. Siege engines, ladders,
+drawbridges and battlements make attacking and defending a base a real fight.
 
-![A player-built fort](docs/screenshots/build_fort.png)
+![The river narrows](docs/screenshots/river_narrows.png)
+
+![A drawbridge lowered across the river](docs/screenshots/drawbridge.png)
 
 ## Running it
 
@@ -37,7 +39,10 @@ The default port is **24565** (UDP). Open it on the host's router to play over t
 | Mouse | Look |
 | Left click | Swing, shoot, gather, place a structure, or use an item (whatever is equipped) |
 | 1–9, 0, mouse wheel | Pick a hotbar slot |
-| Q | Build mode (hotbar switches to building pieces) |
+| Q | Build mode; press again for the next page (walls → floors → siege → off) |
+| R (build mode) | Rotate the piece |
+| F / G (build mode) | Repair / upgrade-to-stone the piece you're aiming at |
+| E | Lower/raise your drawbridge, fire your catapult |
 | W / S on a ladder | Climb up / down |
 | C (or B) | Crafting & blueprint shop |
 | Tab (hold) | Scoreboard |
@@ -50,10 +55,15 @@ The default port is **24565** (UDP). Open it on the host's router to play over t
   contested middle of the map.
 - **Craft.** Tools, melee weapons, bows and arrows, and consumables cost resources (C menu).
 - **Build.** Press Q. Pieces snap to a 4 m grid with 3 m levels and are paid for straight
-  from your resources as you place them: wood/stone walls, arrow-slit walls, team-only
-  doors, floors, stairs, roofs, ladders, spike traps and ballistas. Everything must be
-  supported down to the ground: knock out the walls holding up a floor and it collapses.
-- **Scale walls.** Lean a ladder on any wall, including the enemy's, and climb over.
+  from your resources as you place them: wood/stone walls, half walls, window walls,
+  arrow slits, battlements, team-only doors, drawbridges, floors, stairs, roofs, ladders,
+  spike traps, ballistas, catapults and battering rams. Everything must connect to the
+  ground (hillsides and riverbeds count): knock out the supports and it collapses.
+  Repair damaged pieces (F) and upgrade wood to stone in place (G).
+- **Siege.** Lean ladders on enemy walls and climb over, push a battering ram into their
+  gate, or lob catapult boulders over the walls.
+- **Terrain.** Hills, valleys, forests of full-size trees, and a river that slows you to a
+  wade. Cross at the two fords, build a bridge, or lower a drawbridge across the narrows.
 - **Earn gold.** Kills pay 50g; capturing a crown pays 250g to the carrier and 75g to
   every teammate; returning your own dropped crown pays 25g.
 - **Unlock.** Spend gold on blueprints: war hammer, crossbow, ballista, spike trap,

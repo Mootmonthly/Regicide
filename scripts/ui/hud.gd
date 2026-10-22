@@ -32,6 +32,7 @@ var _last_health := -1.0
 var _last_crown_states: Array = []
 var _crosshair_tween: Tween
 var _hotbar_build_mode := false
+var _hotbar_page := 0
 var _mode_label: Label
 
 
@@ -173,7 +174,7 @@ func _build() -> void:
 	bottom.add_child(_mode_label)
 	bottom.move_child(_mode_label, 1)
 
-	var help := _label("WASD move · Shift sprint · Space jump · LMB use · 1-0 / wheel select · Q build mode · C craft & shop · Tab scores · Esc free mouse", 13)
+	var help := _label("WASD move · Shift sprint · Space jump · LMB use · 1-0 / wheel select · Q build · E use · C craft & shop · Tab scores · Esc free mouse", 13)
 	help.horizontal_alignment = HORIZONTAL_ALIGNMENT_CENTER
 	bottom.add_child(help)
 
@@ -334,11 +335,9 @@ func _process(_delta: float) -> void:
 			_center.text = "You carry the %s crown! Bring it to your pedestal." % GameData.team_name(me.carrying_crown)
 		else:
 			_center.text = ""
-		if me.build_mode != _hotbar_build_mode:
+		if me.build_page != _hotbar_page:
 			_rebuild_hotbar()
-		_mode_label.text = "BUILD MODE: left click to place · Q to leave" if me.build_mode else ""
-		if me.on_ladder:
-			_mode_label.text = "On a ladder: W to climb, S to climb down"
+		_mode_label.text = _mode_text(me)
 		for i in _hotbar.get_child_count():
 			_hotbar.get_child(i).modulate = Color.WHITE if i == me.hotbar_index else Color(1, 1, 1, 0.55)
 
@@ -399,8 +398,9 @@ func _rebuild_hotbar() -> void:
 	for c in _hotbar.get_children():
 		c.queue_free()
 	var me := _world.local_player()
-	_hotbar_build_mode = me != null and me.build_mode
-	var bar := _game_mode.hotbar_items(_hotbar_build_mode)
+	_hotbar_page = me.build_page if me else 0
+	_hotbar_build_mode = _hotbar_page > 0
+	var bar := _game_mode.hotbar_items(_hotbar_page)
 	for i in bar.size():
 		var id := bar[i]
 		var panel := PanelContainer.new()
@@ -428,6 +428,33 @@ func _rebuild_hotbar() -> void:
 		_hotbar.add_child(panel)
 
 
+## The line above the hotbar: build-mode controls, repair/upgrade costs, interactions.
+func _mode_text(me: Player) -> String:
+	if me.on_ladder:
+		return "On a ladder: W to climb, S to climb down"
+	var lines: PackedStringArray = []
+	if me.build_mode:
+		var page: String = GameData.BUILD_CATEGORIES[me.build_page - 1]
+		lines.append("BUILD: %s  ·  click place · R rotate · Q next page" % GameData.BUILD_CATEGORY_NAMES[page])
+		var piece := me.aimed_piece
+		if piece and is_instance_valid(piece):
+			var parts: PackedStringArray = []
+			if piece.health < piece.max_health:
+				parts.append("F repair (%s)" % _short_cost(GameMode.repair_cost(piece)))
+			var upgrade: String = GameData.item(piece.item_id).get("upgrade", "")
+			if upgrade != "":
+				parts.append("G upgrade to %s (%s)" % [GameData.display_name(upgrade), _short_cost(GameData.item(upgrade)["recipe"])])
+			if not parts.is_empty():
+				lines.append("%s: %s" % [GameData.display_name(piece.item_id), "  ·  ".join(parts)])
+	var target := me.interact_target
+	if target and is_instance_valid(target):
+		if target.is_drawbridge():
+			lines.append("E: %s the drawbridge" % ("raise" if target.opened else "lower"))
+		elif target.is_catapult():
+			lines.append("E: fire the catapult where you aim (aim higher to throw farther; 5 stone)")
+	return "\n".join(lines)
+
+
 func _short_cost(recipe: Dictionary) -> String:
 	var parts: PackedStringArray = []
 	for res: String in recipe:
@@ -445,7 +472,7 @@ func _rebuild_menu() -> void:
 		var kind: String = def["kind"]
 		if kind != last_kind:
 			last_kind = kind
-			var heading := "Building (press Q to build)" if kind == "structure" else kind.capitalize() + "s"
+			var heading := "Building (Q to build: Q again for the next page)" if kind == "structure" else kind.capitalize() + "s"
 			_menu_list.add_child(_label(heading, 20))
 		var row := HBoxContainer.new()
 		_menu_list.add_child(row)

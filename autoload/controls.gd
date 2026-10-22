@@ -11,6 +11,10 @@ const KEYS := {
 	"toggle_menu": [KEY_C, KEY_B],
 	"scoreboard": [KEY_TAB],
 	"build_mode": [KEY_Q],
+	"interact": [KEY_E],
+	"rotate_piece": [KEY_R],
+	"repair": [KEY_F],
+	"upgrade": [KEY_G],
 	"release_mouse": [KEY_ESCAPE],
 }
 

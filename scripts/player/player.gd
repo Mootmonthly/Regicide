@@ -14,6 +14,7 @@ const GRAVITY := 18.0
 const MOUSE_SENSITIVITY := 0.0025
 const REMOTE_SMOOTHING := 15.0
 const CLIMB_SPEED := 4.0
+const WADE_MULT := 0.45
 
 var peer_id := 1
 var team := 0
@@ -58,7 +59,17 @@ var wants_jump := false
 
 var hotbar_index := 0
 ## Build mode swaps the hotbar for building pieces (toggle with Q).
-var build_mode := false
+## 0 = normal play; 1+ = build mode on that page of building pieces (Q cycles).
+var build_page := 0
+var build_mode: bool:
+	get:
+		return build_page > 0
+## Manual rotation for the next piece (R).
+var build_turn := 0
+## In build mode: your team's piece under the crosshair (for repair / upgrade).
+var aimed_piece: Structure
+## Your team's drawbridge or catapult within reach (E to use).
+var interact_target: Structure
 var on_ladder := false
 
 var _game_mode: GameMode
@@ -130,8 +141,15 @@ func teleport(pos: Vector3) -> void:
 	velocity = Vector3.ZERO
 
 
+func in_water() -> bool:
+	return position.y < Terrain.WATER_LEVEL - 0.35
+
+
 func current_speed(sprinting: bool) -> float:
 	var speed := SPRINT_SPEED if sprinting else WALK_SPEED
+	if in_water():
+		# Wading: no sprinting, and horses don't help.
+		return WALK_SPEED * WADE_MULT * (CROWN_CARRY_MULT if carrying_crown >= 0 else 1.0)
 	if carrying_crown >= 0:
 		return speed * CROWN_CARRY_MULT
 	if mounted:
@@ -159,6 +177,8 @@ func _physics_process(delta: float) -> void:
 
 
 func _owner_physics(delta: float) -> void:
+	if _world and not _world.terrain_ready:
+		return  # wait for the map before falling onto it
 	if not alive:
 		velocity = Vector3.ZERO
 		_update_ghost()
@@ -204,8 +224,9 @@ func _owner_physics(delta: float) -> void:
 func _process(_delta: float) -> void:
 	if not is_local() or _game_mode == null:
 		return
+	interact_target = _world.interactable_near(position, team) if alive and _world else null
 	# Keep the equipped item valid as the inventory changes.
-	var bar := _game_mode.hotbar_items(build_mode)
+	var bar := _game_mode.hotbar_items(build_page)
 	if hotbar_index < bar.size() and bar[hotbar_index] == equipped:
 		return
 	var idx := bar.find(equipped)
@@ -234,13 +255,28 @@ func _unhandled_input(event: InputEvent) -> void:
 			get_viewport().set_input_as_handled()
 		return
 	if event.is_action_pressed("build_mode"):
-		set_build_mode(not build_mode)
+		set_build_page((build_page + 1) % (GameData.BUILD_CATEGORIES.size() + 1))
 		return
+	if event.is_action_pressed("interact") and interact_target:
+		_game_mode.request(&"request_interact", [aim_direction()])
+		return
+	if build_mode:
+		if event.is_action_pressed("rotate_piece"):
+			build_turn = (build_turn + 1) % 4
+			Sfx.play("click", -10.0)
+			return
+		if event.is_action_pressed("repair") and aimed_piece:
+			_game_mode.request(&"request_repair", [String(aimed_piece.name)])
+			Sfx.play("repair", -4.0)
+			return
+		if event.is_action_pressed("upgrade") and aimed_piece:
+			_game_mode.request(&"request_upgrade", [String(aimed_piece.name)])
+			return
 	for i in 10:
 		if event.is_action_pressed("hotbar_%d" % (i + 1)):
 			select_slot(i)
 			return
-	var count := maxi(_game_mode.hotbar_items(build_mode).size(), 1)
+	var count := maxi(_game_mode.hotbar_items(build_page).size(), 1)
 	if captured and event.is_action_pressed("next_slot"):
 		select_slot(wrapi(hotbar_index + 1, 0, count))
 	elif captured and event.is_action_pressed("prev_slot"):
@@ -248,19 +284,23 @@ func _unhandled_input(event: InputEvent) -> void:
 
 
 func set_build_mode(on: bool) -> void:
-	if on == build_mode:
+	set_build_page(1 if on else 0)
+
+
+func set_build_page(page: int) -> void:
+	if page == build_page:
 		return
-	if on:
+	if build_page == 0:
 		_saved_weapon_index = hotbar_index
-	build_mode = on
-	select_slot(0 if on else _saved_weapon_index)
-	if hotbar_index >= _game_mode.hotbar_items(build_mode).size():
+	build_page = page
+	select_slot(_saved_weapon_index if page == 0 else 0)
+	if hotbar_index >= _game_mode.hotbar_items(build_page).size():
 		select_slot(0)
 	Sfx.play("click", -8.0)
 
 
 func select_slot(i: int) -> void:
-	var bar := _game_mode.hotbar_items(build_mode)
+	var bar := _game_mode.hotbar_items(build_page)
 	if i >= 0 and i < bar.size():
 		hotbar_index = i
 		equipped = bar[i]
@@ -328,12 +368,18 @@ func current_build_slot() -> Dictionary:
 	query.exclude = [get_rid()]
 	var hit := get_world_3d().direct_space_state.intersect_ray(query)
 	var point: Vector3
+	aimed_piece = null
 	if hit.is_empty():
 		var flat := Vector3(dir.x, 0, dir.z).normalized()
 		point = global_position + flat * 5.0
+		point.y = Terrain.height(point.x, point.z)
 	else:
 		point = hit["position"] + hit["normal"] * 0.05
-	return BuildGrid.slot_for(equipped, point, dir, global_position)
+		var collider: Object = hit["collider"]
+		if collider is Structure and (collider as Structure).team == team \
+				and chest().distance_to(hit["position"]) <= BuildGrid.REACH:
+			aimed_piece = collider
+	return BuildGrid.slot_for(equipped, point, dir, global_position, build_turn)
 
 
 @rpc("authority", "call_remote", "unreliable")
@@ -498,7 +544,7 @@ func _build_camera() -> void:
 	_pivot.add_child(arm)
 	_camera = Camera3D.new()
 	_camera.fov = 75.0
-	_camera.far = 400.0
+	_camera.far = 700.0
 	arm.add_child(_camera)
 	_camera.current = true
 
@@ -511,6 +557,7 @@ func _update_ghost() -> void:
 		if _ghost:
 			_ghost.visible = false
 		_ghost_slot = {}
+		aimed_piece = null
 		return
 	if _ghost == null or _ghost_item != equipped:
 		if _ghost:
@@ -522,7 +569,10 @@ func _update_ghost() -> void:
 	_ghost_slot = current_build_slot()
 	var kind := BuildGrid.kind_of(equipped)
 	_ghost.visible = true
-	_ghost.global_transform = BuildGrid.transform_for(kind, _ghost_slot)
+	var ghost_xf := BuildGrid.transform_for(kind, _ghost_slot)
+	if kind == "vehicle":
+		ghost_xf.origin.y = Terrain.height(ghost_xf.origin.x, ghost_xf.origin.z)
+	_ghost.global_transform = ghost_xf
 	_ghost_problem = _world.placement_problem(equipped, _ghost_slot)
 	if _ghost_problem == "" and chest().distance_to(BuildGrid.center_of(kind, _ghost_slot)) > BuildGrid.REACH:
 		_ghost_problem = "Too far away."

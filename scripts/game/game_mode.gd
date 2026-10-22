@@ -254,6 +254,7 @@ func _snapshot() -> Dictionary:
 		"resources": world.resource_snapshot(),
 		"match_over": match_over,
 		"winner": winner,
+		"pieces": world.piece_states(),
 	}
 
 
@@ -286,6 +287,7 @@ func _welcome(seed_value: int, snapshot: Dictionary) -> void:
 	scores = snapshot["scores"]
 	_apply_crowns(snapshot["crowns"])
 	world.apply_resource_snapshot(snapshot["resources"])
+	world.apply_piece_states(snapshot.get("pieces", {}))
 	match_over = snapshot["match_over"]
 	winner = snapshot["winner"]
 	scores_updated.emit()
@@ -353,20 +355,23 @@ func _apply_crowns(data: Array) -> void:
 	crowns_updated.emit()
 
 
-## Hotbar contents for the local player. Normal mode: fists, then owned items.
-## Build mode: every building piece you've unlocked (paid for when placed).
-func hotbar_items(build_mode := false) -> Array[String]:
-	return hotbar_for(my_inventory, my_unlocks, build_mode)
+## Hotbar contents for the local player. Page 0 is normal play: fists, then owned
+## items. Pages 1+ are build mode: the unlocked building pieces of that category
+## (paid for when placed).
+func hotbar_items(build_page := 0) -> Array[String]:
+	return hotbar_for(my_inventory, my_unlocks, build_page)
 
 
-static func hotbar_for(inventory: Dictionary, unlocks: Array, build_mode := false) -> Array[String]:
+static func hotbar_for(inventory: Dictionary, unlocks: Array, build_page := 0) -> Array[String]:
 	var out: Array[String] = []
-	if not build_mode:
+	if build_page <= 0:
 		out.append("")
+	var category: String = GameData.BUILD_CATEGORIES[build_page - 1] if build_page > 0 else ""
 	for id: String in GameData.ITEMS:
 		var def: Dictionary = GameData.ITEMS[id]
-		if build_mode:
-			if def["kind"] == "structure" and (int(def["unlock_cost"]) <= 0 or unlocks.has(id)):
+		if build_page > 0:
+			if def["kind"] == "structure" and def.get("category", "") == category \
+					and (int(def["unlock_cost"]) <= 0 or unlocks.has(id)):
 				out.append(id)
 		elif def["kind"] != "ammo" and def["kind"] != "structure" and int(inventory.get(id, 0)) > 0:
 			out.append(id)
@@ -438,6 +443,112 @@ func perform_build(peer: int, item_id: String, slot: Dictionary) -> bool:
 	_next_structure_uid += 1
 	_push_private(peer)
 	return true
+
+
+## E key: lower/raise your team's drawbridge, or fire your team's catapult.
+@rpc("any_peer", "call_local", "reliable")
+func request_interact(aim_dir: Vector3) -> void:
+	if server_running:
+		perform_interact(_sender(), aim_dir)
+
+
+func perform_interact(peer: int, aim_dir: Vector3) -> bool:
+	if match_over:
+		return false
+	var rec: PlayerRecord = records.get(peer)
+	var p := world.get_player(peer)
+	if rec == null or p == null or not p.alive:
+		return false
+	var s := world.interactable_near(p.sync_pos, rec.team)
+	if s == null:
+		return false
+	if s.is_drawbridge():
+		if clock < rec.next_action_time:
+			return false
+		rec.next_action_time = clock + 1.0
+		s.opened = not s.opened
+		world.piece_open.rpc(s.name, s.opened)
+		return true
+	if s.is_catapult():
+		return _fire_catapult(rec, s, aim_dir)
+	return false
+
+
+## F key in build mode: patch up one of your team's damaged pieces.
+@rpc("any_peer", "call_local", "reliable")
+func request_repair(structure_name: String) -> void:
+	if server_running:
+		perform_repair(_sender(), structure_name)
+
+
+func perform_repair(peer: int, structure_name: String) -> bool:
+	var rec: PlayerRecord = records.get(peer)
+	var s := _own_piece_in_reach(peer, structure_name)
+	if s == null or s.health >= s.max_health:
+		return false
+	var cost := repair_cost(s)
+	if not rec.inventory.pay(cost):
+		_tell(peer, "Repairing needs %s." % GameData.cost_text(cost))
+		return false
+	s.health = s.max_health
+	world.structure_health.rpc(s.name, 1.0)
+	world.fx_repair.rpc(s.global_position + Vector3(0, 1.5, 0))
+	_push_private(peer)
+	return true
+
+
+## Half the piece's price, scaled by how damaged it is (at least 1 of each).
+static func repair_cost(s: Structure) -> Dictionary:
+	var missing := 1.0 - s.health / s.max_health
+	var cost := {}
+	var recipe: Dictionary = GameData.item(s.item_id)["recipe"]
+	for res: String in recipe:
+		cost[res] = maxi(1, ceili(int(recipe[res]) * missing * 0.5))
+	return cost
+
+
+## G key in build mode: rebuild a wood piece in stone, in place.
+@rpc("any_peer", "call_local", "reliable")
+func request_upgrade(structure_name: String) -> void:
+	if server_running:
+		perform_upgrade(_sender(), structure_name)
+
+
+func perform_upgrade(peer: int, structure_name: String) -> bool:
+	var rec: PlayerRecord = records.get(peer)
+	var s := _own_piece_in_reach(peer, structure_name)
+	if s == null:
+		return false
+	var target: String = GameData.item(s.item_id).get("upgrade", "")
+	if target == "" or not rec.is_unlocked(target):
+		return false
+	var recipe: Dictionary = GameData.item(target)["recipe"]
+	if not rec.inventory.pay(recipe):
+		_tell(peer, "Upgrading needs %s." % GameData.cost_text(recipe))
+		return false
+	var slot := s.slot.duplicate()
+	var piece_team := s.team
+	world.unregister_piece(s)
+	s.queue_free()
+	world.structure_spawner.spawn({
+		"uid": _next_structure_uid, "item": target, "team": piece_team, "owner": peer, "slot": slot,
+	})
+	_next_structure_uid += 1
+	_push_private(peer)
+	return true
+
+
+func _own_piece_in_reach(peer: int, structure_name: String) -> Structure:
+	var rec: PlayerRecord = records.get(peer)
+	var p := world.get_player(peer)
+	if rec == null or p == null or not p.alive or match_over:
+		return null
+	var s := world.structures_root.get_node_or_null(structure_name) as Structure
+	if s == null or s.is_queued_for_deletion() or s.team != rec.team:
+		return null
+	if s.closest_point(p.chest()).distance_to(p.chest()) > BuildGrid.REACH:
+		return null
+	return s
 
 
 func perform_craft(peer: int, item_id: String) -> bool:
@@ -611,8 +722,9 @@ func _shoot(rec: PlayerRecord, shooter: Player, def: Dictionary, aim_dir: Vector
 		t += dt
 		velocity.y -= GameData.ARROW_GRAVITY * dt
 		pos += velocity * dt
-		if pos.y <= 0.0:
-			pos.y = 0.0
+		var ground := Terrain.height(pos.x, pos.z)
+		if pos.y <= ground:
+			pos.y = ground
 			break
 		var done := false
 		for p in players:
@@ -631,7 +743,7 @@ func _shoot(rec: PlayerRecord, shooter: Player, def: Dictionary, aim_dir: Vector
 		if done:
 			break
 		for r in nodes:
-			if pos.y < 4.5 and GameData.flat_distance(pos, r.global_position) < r.radius:
+			if pos.y < r.global_position.y + r.tree_height and GameData.flat_distance(pos, r.global_position) < r.radius:
 				done = true
 				break
 		if done:
@@ -737,6 +849,65 @@ func fire_turret(s: Structure, target: Player, turret: Dictionary) -> void:
 	damage_player(target.peer_id, turret["damage"], s.owner_peer, "ballista")
 
 
+func ram_hit(ram: Structure, target: Structure) -> void:
+	world.fx_ram.rpc(ram.global_position + -ram.global_basis.z * 3.0 + Vector3(0, 1, 0))
+	damage_structure(target, ram._ram["damage"])
+
+
+## Lob a boulder: the player's aim picks the direction, and how high they aim sets the
+## launch angle (and so the range). Costs stone from the firer.
+func _fire_catapult(rec: PlayerRecord, cat: Structure, aim_dir: Vector3) -> bool:
+	var cfg := cat.catapult_config()
+	if clock < cat._cooldown:
+		_tell(rec.peer_id, "The catapult is reloading.")
+		return false
+	var ammo: Dictionary = cfg["ammo"]
+	if not rec.inventory.pay(ammo):
+		_tell(rec.peer_id, "The catapult needs %s per shot." % GameData.cost_text(ammo))
+		return false
+	_push_private(rec.peer_id)
+	cat._cooldown = clock + float(cfg["cooldown"])
+	var flat := Vector3(aim_dir.x, 0, aim_dir.z).normalized()
+	if flat == Vector3.ZERO:
+		flat = -cat.global_basis.z
+	# Aiming level throws at ~40 degrees; aim down for a flatter, shorter throw.
+	var angle := clampf(asin(clampf(aim_dir.y, -1.0, 1.0)) + 0.7, 0.15, 0.8)
+	var speed: float = cfg["speed"]
+	var velocity := flat * cos(angle) * speed + Vector3.UP * sin(angle) * speed
+	var start := cat.global_position + Vector3(0, 3.2, 0)
+	var pos := start
+	var vel := velocity
+	var dt := 1.0 / 30.0
+	var t := 0.0
+	while t < 10.0:
+		t += dt
+		vel.y -= GameData.ARROW_GRAVITY * dt
+		pos += vel * dt
+		if pos.y <= Terrain.height(pos.x, pos.z) or not GameData.in_bounds(pos, 0.0):
+			break
+		if t > 0.3 and _boulder_blocked(pos, cat):
+			break
+	var radius: float = cfg["radius"]
+	world.fx_boulder.rpc(cat.name, start, velocity, t, radius)
+	for p in world.get_players():
+		if p.team != rec.team and p.alive and (p.sync_pos + Vector3(0, 0.9, 0)).distance_to(pos) <= radius:
+			damage_player(p.peer_id, cfg["damage"], rec.peer_id, "catapult")
+	for s in world.get_structures():
+		if s.team != rec.team and s.closest_point(pos).distance_to(pos) <= radius:
+			damage_structure(s, cfg["structure_damage"])
+	return true
+
+
+func _boulder_blocked(point: Vector3, cat: Structure) -> bool:
+	for s in world.get_structures():
+		if s != cat and not s.is_trap() and not s.is_ladder() and s.blocks_point(point):
+			return true
+	for p in world.get_players():
+		if p.alive and (p.sync_pos + Vector3(0, 0.9, 0)).distance_to(point) < 1.0:
+			return true
+	return false
+
+
 func trigger_trap(s: Structure, trap: Dictionary) -> void:
 	for p in world.get_players():
 		var yr := s.y_range()
@@ -790,8 +961,9 @@ func _cast_fireball(rec: PlayerRecord, caster: Player, def: Dictionary, aim_dir:
 	while travelled < max_range:
 		point += aim_dir * step
 		travelled += step
-		if point.y <= 0.0:
-			impact = Vector3(point.x, 0.0, point.z)
+		var ground := Terrain.height(point.x, point.z)
+		if point.y <= ground:
+			impact = Vector3(point.x, ground, point.z)
 			break
 		if _fireball_blocked(point, rec.team):
 			impact = point
@@ -855,10 +1027,11 @@ func _physics_process(delta: float) -> void:
 func _collapse_unsupported() -> void:
 	var standing := {}
 	for s in world.get_structures():
-		standing[s.slot_key] = [s.kind, s.slot]
+		if not s.is_vehicle():
+			standing[s.slot_key] = [s.kind, s.slot]
 	var supported := BuildGrid.supported_keys(standing)
 	for s in world.get_structures():
-		if not supported.has(s.slot_key):
+		if not s.is_vehicle() and not supported.has(s.slot_key):
 			s.health = 0.0
 			s.queue_free()
 			_collapse_pending = true
@@ -919,7 +1092,7 @@ func _drop_crown(crown: CrownState, pos: Vector3) -> void:
 		_announce("The %s crown returned home." % GameData.team_name(crown.team))
 	else:
 		crown.state = CrownRules.State.DROPPED
-		crown.position = Vector3(pos.x, 0.0, pos.z)
+		crown.position = Vector3(pos.x, maxf(Terrain.height(pos.x, pos.z), Terrain.WATER_LEVEL), pos.z)
 		crown.dropped_at = clock
 		_announce("The %s crown was dropped!" % GameData.team_name(crown.team))
 	_sync_crowns()

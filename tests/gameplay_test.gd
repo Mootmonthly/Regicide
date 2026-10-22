@@ -22,6 +22,7 @@ func _ready() -> void:
 	Net.port = 26000 + randi() % 2000
 	Net.player_name = "Tester"
 	Net.team_fill = 0
+	Terrain.force_flat = true  # mechanics tests want level ground
 	world = load("res://scenes/world.tscn").instantiate()
 	add_child(world)
 	gm = world.game_mode
@@ -186,6 +187,9 @@ func _run() -> void:
 	rec.inventory.add("shortbow", 1)
 	_place(me, Vector3(-60, 0, 10), Vector3(-60, 0, 30))
 	enemy.teleport(Vector3(-60, 0, 30))
+	for r in world.resource_nodes:  # clear any trees off the firing line
+		if absf(r.position.x + 60.0) < 4.0 and r.position.z > 5.0 and r.position.z < 35.0:
+			r.set_amount(0)
 	await _frames(3)
 	_ready_to_act(1)
 	gm.request_primary("shortbow", Vector3(0, 0.05, 1).normalized(), Vector3.ZERO)
@@ -230,7 +234,8 @@ func _run() -> void:
 	check(rec.inventory.count("wood") == wood_before - 3 * 8 - 6 - 8, "pieces are paid from resources")
 	_ready_to_act(1)
 	check(not gm.perform_build(1, "wood_floor", S.make_slot(-20, 0, 0)), "can't build out of reach")
-	check(world.placement_problem("wood_wall", S.make_slot(0, 37, 0, 0)) != "", "can't build on a crown")
+	var crown_j := roundi((GameData.crown_pos(0).z - 2.0) / 4.0)
+	check(world.placement_problem("wood_wall", S.make_slot(0, crown_j, 0, 0)) != "", "can't build on a crown")
 	var crowd := S.make_slot(roundi(walker.position.x / 4.0), roundi(walker.position.z / 4.0), 0)
 	check(world.placement_problem("wood_floor", crowd) == "Someone is in the way.", "can't build on top of someone")
 	# Walk up the stairs (they rise toward -X) and onto the floor.
@@ -272,6 +277,125 @@ func _run() -> void:
 	check(max_y > 2.9, "climbed the ladder (max height %.2f)" % max_y)
 	check(walker.position.z < 21.5, "and dropped over the wall (%s)" % walker.position)
 	gm._remove_player(walker.peer_id)
+
+	# --- Half walls, windows, battlements ---
+	_place(me, Vector3(-42, 0, 40), Vector3(-42, 0, 30))
+	await _frames(2)
+	_ready_to_act(1)
+	check(gm.perform_build(1, "wood_half_wall", S.make_slot(-10, 8, 0, 0)), "half wall placed")
+	_ready_to_act(1)
+	check(not gm.perform_build(1, "wood_floor", S.make_slot(-10, 8, 1)), "half walls hold nothing up")
+	world.structure_spawner.spawn({"uid": 9100, "item": "wood_window", "team": 0, "owner": 1, "slot": S.make_slot(-11, 8, 0, 0)})
+	await _frames(1)
+	var window: Structure = world.pieces[S.edge_key(0, -11, 8, 0)]
+	check(not window.blocks_point(window.global_position + Vector3(0, 1.6, 0)), "you can see and shoot through a window")
+	check(window.blocks_point(window.global_position + Vector3(0, 0.5, 0)), "below the window is solid")
+	_ready_to_act(1)
+	check(gm.perform_build(1, "wood_wall", S.make_slot(-12, 8, 0, 0)), "wall for the battlement")
+	_ready_to_act(1)
+	check(gm.perform_build(1, "battlement", S.make_slot(-12, 8, 1, 0)), "battlement sits on top of a wall")
+	var bat: Structure = world.pieces[S.edge_key(0, -12, 8, 1)]
+	check(bat.blocks_point(bat.global_position + Vector3(0, 1.4, 0)) and not bat.blocks_point(bat.global_position + Vector3(0.75, 1.4, 0)), "battlements have merlons and gaps")
+
+	# --- Repair & upgrade ---
+	var plain: Structure = world.pieces[S.edge_key(0, -12, 8, 0)]
+	plain.health = 100.0
+	var wood_now := rec.inventory.count("wood")
+	check(gm.perform_repair(1, plain.name), "repair a damaged wall")
+	check(is_equal_approx(plain.health, plain.max_health) and rec.inventory.count("wood") < wood_now, "repair restores health and costs wood")
+	check(not gm.perform_repair(1, plain.name), "nothing to repair at full health")
+	check(not gm.perform_repair(ENEMY, plain.name), "enemies can't repair your walls")
+	var stone_now := rec.inventory.count("stone")
+	check(gm.perform_upgrade(1, plain.name), "upgrade wood wall to stone")
+	await _frames(3)
+	var upgraded: Structure = world.pieces.get(S.edge_key(0, -12, 8, 0))
+	check(upgraded != null and upgraded.item_id == "stone_wall", "the slot now holds a stone wall")
+	check(rec.inventory.count("stone") == stone_now - 10, "upgrading costs the stone wall's price")
+	check(world.pieces.has(S.edge_key(0, -12, 8, 1)), "the battlement on top survived the upgrade")
+	check(not gm.perform_upgrade(1, upgraded.name), "stone can't be upgraded further")
+
+	# --- Rotation ---
+	var straight := S.slot_for("wood_wall", Vector3(1, 0.05, 5.7), Vector3(0, -0.2, -1), Vector3(0, 0, 12), 0)
+	var turned := S.slot_for("wood_wall", Vector3(1, 0.05, 5.7), Vector3(0, -0.2, -1), Vector3(0, 0, 12), 1)
+	check(straight["axis"] != turned["axis"], "R turns a wall to run the other way")
+	var stairs_turned := S.slot_for("wood_stairs", Vector3(0, 0.05, -4), Vector3(0, 0, -1), Vector3.ZERO, 2)
+	check(stairs_turned["rot"] == 2, "R turns stairs")
+
+	# --- Drawbridge ---
+	_place(me, Vector3(-56, 0, 38), Vector3(-56, 0, 30))
+	await _frames(2)
+	_ready_to_act(1)
+	var db_slot := S.slot_for("drawbridge", Vector3(-56, 0.05, 34.2), Vector3(0, -0.3, -1), me.position)
+	check(db_slot["side"] == -1, "a drawbridge lowers away from its builder")
+	check(gm.perform_build(1, "drawbridge", db_slot), "drawbridge built")
+	var bridge: Structure = world.pieces[S.key("drawbridge", db_slot)]
+	var line := bridge.global_position
+	check(bridge.blocks_point(line + Vector3(0, 2.0, 0)), "raised drawbridge blocks the way")
+	_place(me, Vector3(-56, 0, 36.2), Vector3(-56, 0, 30))
+	await _frames(2)
+	check(not gm.perform_interact(ENEMY, Vector3.FORWARD), "enemies can't work your drawbridge")
+	_ready_to_act(1)
+	check(gm.perform_interact(1, Vector3.FORWARD), "lower the drawbridge (E)")
+	await _frames(90)
+	check(bridge.opened and not bridge.blocks_point(line + Vector3(0, 2.0, 0)), "lowered drawbridge opens the way")
+	check(bridge.blocks_point(line + Vector3(0, 0.0, -2.0)), "and lies flat as a bridge on the far side")
+	var snap := world.piece_states()
+	check(snap.get(String(bridge.name), {}).get("open", false), "late joiners learn it's lowered")
+
+	# --- Catapult ---
+	rec.unlocks["catapult"] = true
+	rec.inventory.add("stone", 100)
+	rec.inventory.add("iron", 20)
+	_place(me, Vector3(-32, 0, 60), Vector3(-32, 0, 50))
+	await _frames(2)
+	_ready_to_act(1)
+	check(gm.perform_build(1, "catapult", S.make_slot(-8, 14, 0)), "catapult built")
+	var cat: Structure = world.pieces[S.key("free", S.make_slot(-8, 14, 0))]
+	world.structure_spawner.spawn({"uid": 9200, "item": "stone_wall", "team": 1, "owner": ENEMY, "slot": S.make_slot(-8, 6, 0, 0)})
+	await _frames(1)
+	var target_wall: Structure = world.pieces[S.edge_key(0, -8, 6, 0)]
+	var hit := false
+	var stone_before := rec.inventory.count("stone")
+	var shots := 0
+	for k in 30:
+		var pitch := -0.6 + k * 0.04
+		cat._cooldown = 0.0
+		if gm.perform_interact(1, Vector3(0, sin(pitch), -cos(pitch))):
+			shots += 1
+		if not is_instance_valid(target_wall) or target_wall.health < target_wall.max_health:
+			hit = true
+			break
+	check(hit, "the catapult can lob a boulder onto a wall 30 m away")
+	check(rec.inventory.count("stone") == stone_before - 5 * shots, "each shot costs 5 stone")
+	cat._cooldown = gm.clock + 10.0
+	check(not gm.perform_interact(1, Vector3.FORWARD), "the catapult has to reload")
+
+	# --- Battering ram ---
+	rec.unlocks["battering_ram"] = true
+	rec.inventory.add("wood", 60)
+	_place(me, Vector3(-72, 0, 42), Vector3(-72, 0, 32))
+	await _frames(2)
+	_ready_to_act(1)
+	check(gm.perform_build(1, "battering_ram", S.make_slot(-18, 8, 0, 0, 0)), "battering ram built")
+	var ram: Structure = null
+	for st in world.get_structures():
+		if st.is_vehicle():
+			ram = st
+	world.structure_spawner.spawn({"uid": 9300, "item": "stone_wall", "team": 1, "owner": ENEMY, "slot": S.make_slot(-18, 4, 0, 0)})
+	await _frames(1)
+	var gate_wall: Structure = world.pieces[S.edge_key(0, -18, 4, 0)]
+	var start_z := ram.position.z
+	await _frames(60)
+	check(is_equal_approx(ram.position.z, start_z), "a ram doesn't move by itself")
+	var pusher := _make_walker(0, Vector3(-72, 0, 35.2))
+	pusher.rotation.y = 0.0
+	pusher.move_input = Vector2(0, -1)
+	await _frames(240)
+	check(ram.position.z < start_z - 3.0, "pushing from behind rolls the ram forward (moved %.1f m)" % (start_z - ram.position.z))
+	await _frames(420)
+	pusher.move_input = Vector2.ZERO
+	check(not is_instance_valid(gate_wall) or gate_wall.health < gate_wall.max_health, "the ram batters the enemy wall in front of it")
+	gm._remove_player(pusher.peer_id)
 
 	# --- Doors, arrow slits, traps ---
 	world.structure_spawner.spawn({"uid": 9001, "item": "wood_door", "team": 0, "owner": 1, "slot": S.make_slot(15, 10, 0, 0)})

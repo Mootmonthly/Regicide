@@ -13,6 +13,7 @@ func _ready() -> void:
 	_test_map_generator()
 	_test_build_zones()
 	_test_build_grid()
+	_test_terrain()
 	print("%d checks, %d failures" % [_checks, _failures])
 	get_tree().quit(1 if _failures > 0 else 0)
 
@@ -58,9 +59,13 @@ func _test_game_data() -> void:
 					check(def.has(key), "%s has %s" % [id, key])
 				check(GameData.is_item(def.get("ammo", "")), "%s ammo exists" % id)
 			"structure":
-				check(def.get("piece", "") in ["wall", "door", "floor", "stairs", "roof", "ladder", "free"], "%s has a piece type" % id)
+				check(def.get("piece", "") in ["wall", "door", "half", "drawbridge", "floor", "stairs", "roof", "ladder", "free", "vehicle"], "%s has a piece type" % id)
 				check(float(def.get("health", 0)) > 0, "%s has health" % id)
 				check(not Structure.piece_boxes(id, 0).is_empty(), "%s has a shape" % id)
+				check(def.get("category", "") in GameData.BUILD_CATEGORIES, "%s has a build page" % id)
+				if def.has("upgrade"):
+					var up: String = def["upgrade"]
+					check(GameData.item(up).get("piece") == def["piece"], "%s upgrades to the same kind of piece" % id)
 			"consumable":
 				check(def.has("effect"), "%s has an effect" % id)
 	check(GameData.item("").get("kind") == "fists", "empty id means fists")
@@ -69,10 +74,15 @@ func _test_game_data() -> void:
 	var rec := PlayerRecord.new(5, "Test", 0)
 	check(rec.is_unlocked("stone_axe"), "free items start unlocked")
 	check(not rec.is_unlocked("ballista"), "paid items start locked")
-	check(GameMode.hotbar_for({"iron_sword": 1, "wood": 50}, [], false) == ["", "iron_sword"], "normal hotbar: fists + owned gear")
-	var build_bar := GameMode.hotbar_for({}, [], true)
-	check(build_bar.has("wood_wall") and build_bar.has("ladder") and not build_bar.has("ballista"), "build hotbar: unlocked pieces")
-	check(GameMode.hotbar_for({}, ["ballista"], true).has("ballista"), "unlocked blueprints join the build hotbar")
+	check(GameMode.hotbar_for({"iron_sword": 1, "wood": 50}, [], 0) == ["", "iron_sword"], "normal hotbar: fists + owned gear")
+	var walls := GameMode.hotbar_for({}, [], 1)
+	var floors := GameMode.hotbar_for({}, [], 2)
+	var siege := GameMode.hotbar_for({}, [], 3)
+	check(walls.has("wood_wall") and walls.has("drawbridge") and walls.has("battlement"), "build page 1: walls & gates")
+	check(floors.has("wood_stairs") and floors.has("ladder"), "build page 2: floors, stairs, roofs")
+	check(not siege.has("ballista") and GameMode.hotbar_for({}, ["ballista"], 3).has("ballista"), "page 3: siege, once unlocked")
+	for bar in [walls, floors]:
+		check(bar.size() <= 10, "each build page fits the 1-0 keys")
 
 
 func _test_crown_rules() -> void:
@@ -95,6 +105,7 @@ func _test_crown_rules() -> void:
 
 
 func _test_map_generator() -> void:
+	Terrain.force_flat = false
 	var a := MapGenerator.generate(1234)
 	var b := MapGenerator.generate(1234)
 	var c := MapGenerator.generate(999)
@@ -102,13 +113,14 @@ func _test_map_generator() -> void:
 	check(a.size() % 2 == 0, "map node count is even (mirrored)")
 	check(str(a) == str(b), "same seed gives the same map")
 	check(str(a) != str(c), "different seeds give different maps")
+	Terrain.setup(1234)  # back to map a's terrain for the checks below
 	var half := a.size() / 2
 	var mirrored := true
 	var counts := {}
 	for i in half:
 		var p: Vector3 = a[i]["pos"]
 		var q: Vector3 = a[i + half]["pos"]
-		if a[i]["type"] != a[i + half]["type"] or not p.is_equal_approx(Vector3(-q.x, 0, -q.z)):
+		if a[i]["type"] != a[i + half]["type"] or not p.is_equal_approx(Vector3(-q.x, q.y, -q.z)) or absf(p.y - q.y) > 0.01:
 			mirrored = false
 		counts[a[i]["type"]] = counts.get(a[i]["type"], 0) + 1
 	check(mirrored, "map is point-mirrored between teams")
@@ -117,9 +129,43 @@ func _test_map_generator() -> void:
 	for e in a:
 		var p: Vector3 = e["pos"]
 		check(GameData.in_bounds(p), "node inside map: %s" % p)
+		check(not Terrain.is_water(p.x, p.z), "node on dry land: %s" % p)
+		check(absf(p.y - Terrain.height(p.x, p.z)) < 0.01, "node sits on the ground: %s" % p)
 		for t in GameData.TEAM_COUNT:
 			if GameData.flat_distance(p, GameData.crown_pos(t)) < GameData.BASE_CLEAR_RADIUS:
 				check(false, "node too close to a crown: %s" % p)
+
+
+func _test_terrain() -> void:
+	Terrain.force_flat = false
+	Terrain.setup(4242)
+	var hills := 0.0
+	var water := 0
+	var asym := 0.0
+	for x in range(-int(GameData.MAP_WIDTH / 2) + 4, int(GameData.MAP_WIDTH / 2) - 3, 8):
+		for z in range(-int(GameData.MAP_LENGTH / 2) + 4, int(GameData.MAP_LENGTH / 2) - 3, 8):
+			var h := Terrain.height(x, z)
+			hills = maxf(hills, h)
+			if Terrain.is_water(x, z):
+				water += 1
+			asym = maxf(asym, absf(h - Terrain.height(-x, -z)))
+	check(hills > 3.0, "there are hills (max %.1f m)" % hills)
+	check(water > 10, "there is a river (%d wet samples)" % water)
+	check(asym < 0.01, "terrain is point-symmetric (worst %.3f)" % asym)
+	for t in GameData.TEAM_COUNT:
+		var c := GameData.crown_pos(t)
+		check(absf(Terrain.height(c.x, c.z)) < 0.01 and absf(Terrain.height(c.x + 15, c.z + 10 * GameData.team_sign(t))) < 0.05, "base %d is a flat plateau" % t)
+	check(Terrain.is_water(0, Terrain.river_z(0)), "the river runs through the middle")
+	check(not Terrain.is_water(Terrain.FORD_X, Terrain.river_z(Terrain.FORD_X)), "the fords are walkable")
+	var narrow := Terrain.river_width(Terrain.NARROWS_X)
+	check(narrow < 3.0, "there are narrow points a drawbridge can span (channel %.1f m)" % narrow)
+	# Building on terrain: grounded on hills, pillars down into the riverbed.
+	var bed_z := Terrain.river_z(0)
+	var bed_slot := BuildGrid.make_slot(0, roundi(bed_z / 4.0), -1, 0)
+	check(BuildGrid.is_grounded("wall", bed_slot), "a pillar wall stands in the riverbed")
+	check(not BuildGrid.is_grounded("wall", BuildGrid.make_slot(0, roundi(bed_z / 4.0), 2, 0)), "a wall high over the river floats")
+	var home_j := roundi(GameData.crown_pos(0).z / BuildGrid.CELL) - 3
+	check(BuildGrid.is_buried("floor", BuildGrid.make_slot(0, home_j, -2)), "a deep foundation under a base is buried")
 
 
 func _test_build_zones() -> void:
@@ -129,6 +175,8 @@ func _test_build_zones() -> void:
 
 
 func _test_build_grid() -> void:
+	Terrain.force_flat = true
+	Terrain.setup(1)
 	var G := BuildGrid
 	# Snapping: a wall faces you, on the grid line nearest your crosshair.
 	var wall := G.slot_for("wood_wall", Vector3(1.0, 0.05, 5.7), Vector3(0, -0.2, -1), Vector3(0, 0, 12))

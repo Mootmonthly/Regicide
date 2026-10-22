@@ -40,3 +40,7 @@ window/size/viewport_height=720
 
 renderer/rendering_method="gl_compatibility"
 renderer/rendering_method.mobile="gl_compatibility"
+
+[physics]
+
+3d/physics_engine="Jolt Physics"

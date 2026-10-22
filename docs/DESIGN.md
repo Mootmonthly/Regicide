@@ -28,10 +28,16 @@ gather → craft basics → fight / defend → earn gold → unlock blueprints �
 ## Teams & map
 
 - 2 teams, up to 50 each, auto-balanced on join.
-- Map 200 × 360 m, point-mirrored so both sides are identical. Each base has a crown
-  pedestal near the back and a spawn behind it.
-- Resource bands: trees everywhere, stone across each half, iron toward the middle,
-  **magic ore only in the center strip** — the contested zone.
+- Map 400 × 720 m (~600 m crown to crown: a minute's sprint, 40 s on a horse),
+  point-mirrored so both sides are identical. Each base sits on a flat plateau with the
+  crown pedestal near the back and the spawn behind it.
+- **Terrain:** rolling hills and dry valleys (up to ~10 m relief), forests of real-size
+  trees (12–20 m pines and oaks) with clearings between them, and a river winding across
+  the middle. The river is up to ~18 m of water but narrows to ~5 m at x = ±78 (drawbridge
+  territory); two shallow fords at x = ±140 can be walked across. Wading is slow (45%
+  speed, no sprint, no horse bonus).
+- Resource bands: trees in forests everywhere, stone across each half, iron toward the
+  middle, **magic ore only along the river** — the contested zone.
 - No building within 6 m of a pedestal, so a crown can be fortified but never sealed in.
 
 ## Resources
@@ -93,24 +99,37 @@ Press **Q** for build mode: the hotbar switches to building pieces, a see-throug
 snaps to the grid where you aim (green = OK, red = not), and left click places it.
 Pieces are paid for straight from your resources, with no crafting step.
 
-**Grid:** 4 × 4 m cells, 3 m levels, up to 6 levels high. Walls, doors and ladders sit on
-cell edges and always face you; floors, stairs, roofs and free-standing pieces fill cells.
+**Grid:** 4 × 4 m cells, 3 m levels (absolute heights, from -6 m in the riverbed up to
+18 m). Walls, doors and ladders sit on cell edges and face you (R rotates); floors,
+stairs, roofs and free-standing pieces fill cells. Q cycles three pages: walls & gates,
+floors/stairs/roofs, and defenses & siege.
 
 | Piece | Cost | Notes |
 | --- | --- | --- |
-| Wood Wall | 8 wood | 300 hp |
+| Wood Wall | 8 wood | 300 hp. Upgrades to stone |
 | Stone Wall | 10 stone | 800 hp |
+| Wood / Stone Half Wall | 4 wood / 5 stone | Waist-high cover; holds nothing up |
+| Battlement | 8 stone | Crenellated parapet for wall-tops: merlons and gaps |
+| Wood / Stone Window Wall | 7 wood / 9 stone | Big window to see and shoot through |
 | Arrow Slit Wall | 12 stone | Chest-high gap: shoot out, hard to shoot in |
 | Wood Door | 12 wood | Your team walks through; enemies can't |
+| Drawbridge | 20 wood, 4 iron | Raised: a 6 m wall nobody passes. E lowers it into a 6 m bridge |
 | Wood / Stone Floor | 6 wood / 8 stone | Foundations on the ground, floors up high |
 | Wood Stairs | 8 wood | Climb one level |
 | Wood Roof | 6 wood | Sloped; blocks arrows and fireballs from above |
 | Ladder | 4 wood | Lean on any wall — including the enemy's — and climb over |
 | Spike Trap | 6 wood, 3 iron | Blueprint (100g). Hurts enemies standing on it |
 | Ballista | 25 wood, 10 iron | Blueprint (300g). Auto-turret; put it on a tower |
+| Catapult | 30 wood, 10 stone, 5 iron | Blueprint (250g). E fires a boulder where you aim (5 stone/shot, 6 s reload, 17–60 m). 260 structure damage |
+| Battering Ram | 30 wood, 10 iron | Blueprint (200g). Walk into it from behind to push and steer; batters enemy structures in front (240 every 2 s) |
 
-**Support:** everything must connect to the ground. Walls stand on the ground, a wall
-below, or a floor. Floors rest on walls beneath them, or reach one cell out from a floor
+**Repair (F):** restores a damaged piece for half its price, scaled by the damage.
+**Upgrade (G):** rebuilds a wood wall, half wall, window wall or floor in stone, in place
+(pays the stone version's price); whatever rests on it stays up.
+
+**Support:** everything must connect to the ground — anything touching the terrain
+counts, so you can build down a hillside or sink pillar walls into the riverbed and
+deck a bridge across. Walls stand on the ground, a wall below, or a floor. Floors rest on walls beneath them, or reach one cell out from a floor
 that does. Stairs and ballistas need a floor or the ground. Ladders lean on a wall, stand
 on a ladder, or stand on a floor. Destroy a support and whatever it held collapses —
 siege the base of a tower to bring it down.
@@ -162,8 +181,7 @@ than a horse can. Players get 3 s of spawn protection.
 **Next up**
 - Playtest with real people and tune: gather speed, prices, crown carry speed, bot skill.
 - Bot difficulty setting; smarter bot pathing around walls.
-- Repairing pieces, upgrading wood to stone in place, rotating pieces manually.
-- More pieces: half walls, windows, battlements, drawbridge, siege ram, catapult.
+- Moats you can dig; trenches; more siege (siege tower, trebuchet).
 - Blocking, sprint stamina, a few more spells (heal aura, frost bolt).
 - Death drops some resources; respawn wave timer.
 

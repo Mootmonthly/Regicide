@@ -33,6 +33,29 @@ connected to the ground (`BuildGrid.supported_keys`) and drops the rest.
 `Structure.piece_boxes()` defines each piece as boxes (solid and/or visual), used for
 collision, the ghost, arrow/fireball blocking (`blocks_point`), and melee reach.
 
+## Terrain
+
+`Terrain` (pure, unit tested) builds a 2 m heightmap from the map seed with
+`FastNoiseLite`, averaged with its own mirror image so the map is point-symmetric, then
+flattens the bases and carves the river. Every peer builds the same samples; the
+collider (`HeightMapShape3D`), the vertex-colored mesh, gameplay checks (`Terrain.height`
+for arrows, boulders, crowns, resource placement, building support) and the minimap all
+read those samples.
+
+Trees are drawn with one `MultiMesh` per part across the whole map (~1,200 trees in a
+handful of draw calls); each `ResourceNode` keeps only a trunk collider and its state.
+
+Physics uses **Jolt** (built into Godot 4.4): with 100 character bodies on a heightmap it
+halves server frame time versus Godot Physics (~12 ms vs ~24 ms per tick in the 50v50
+soak).
+
+## Moving and stateful pieces
+
+Drawbridges (open/closed) and battering rams (position) have state beyond their spawn
+data. Changes are broadcast (`World.piece_open`, `World.vehicle_pose`), and the welcome
+snapshot carries `World.piece_states()` for late joiners. Moving parts (drawbridge plank,
+catapult arm) live in a rotating "leaf" node whose collision moves with it.
+
 ## Bots
 
 Bots are ordinary `Player` nodes with negative peer ids, owned by the server. A

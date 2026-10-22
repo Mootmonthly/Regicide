@@ -8,11 +8,18 @@ const PLAYER_SCENE_PATH := "res://scenes/player.tscn"
 
 var map_seed := 0
 var resource_nodes: Array[ResourceNode] = []
+## Batched tree drawing: node index -> [[MultiMesh, instance, Transform3D], ...]
+var _tree_instances: Dictionary = {}
+var _stump_instances: Dictionary = {}
 var crown_nodes: Array[Crown] = []
 var hud: Hud
 ## Every standing building piece by its BuildGrid slot key (kept on every peer).
 var pieces: Dictionary = {}
 var ladders: Array[Structure] = []
+## False on clients until the server's map seed arrives and the terrain exists.
+var terrain_ready := false
+## Piece states from the welcome snapshot whose pieces haven't spawned here yet.
+var pending_piece_states: Dictionary = {}
 var _player_scene: PackedScene
 
 @onready var game_mode: GameMode = $GameMode
@@ -80,6 +87,8 @@ func local_player() -> Player:
 # --- Building ----------------------------------------------------------------
 
 func register_piece(s: Structure) -> void:
+	if s.is_vehicle():
+		return  # vehicles move; they don't hold a grid slot
 	pieces[s.slot_key] = s
 	if s.is_ladder():
 		ladders.append(s)
@@ -89,6 +98,75 @@ func unregister_piece(s: Structure) -> void:
 	if pieces.get(s.slot_key) == s:
 		pieces.erase(s.slot_key)
 	ladders.erase(s)
+
+
+## Siege engines sit on dry, fairly level ground with nothing in the way.
+func _vehicle_problem(item_id: String, slot: Dictionary, check_players: bool) -> String:
+	var xf := BuildGrid.transform_for("vehicle", slot)
+	xf.origin.y = Terrain.height(xf.origin.x, xf.origin.z)
+	if xf.origin.y < Terrain.WATER_LEVEL:
+		return "Siege engines can't go in water."
+	if absf(BuildGrid.level_y(slot["level"]) - xf.origin.y) > 2.5:
+		return "Put it on the ground."
+	var box := xf * Structure.local_bounds(item_id)
+	box = box.grow(-0.15)
+	for s in get_structures():
+		if s.is_trap() or s.is_ladder():
+			continue
+		if box.intersects(s.global_transform * s.bounds):
+			return "Something is in the way."
+	if check_players:
+		for p in get_players():
+			if p.alive and box.intersects(AABB(p.sync_pos + Vector3(-0.35, 0.1, -0.35), Vector3(0.7, 1.7, 0.7))):
+				return "Someone is in the way."
+	return ""
+
+
+## Nearest drawbridge or catapult of `team` within reach of p, or null.
+func interactable_near(p: Vector3, team: int, reach := 3.5) -> Structure:
+	var best: Structure = null
+	var best_d := reach
+	for s in get_structures():
+		if s.team != team or not s.is_interactable():
+			continue
+		var d := s.closest_point(p + Vector3(0, 1, 0)).distance_to(p + Vector3(0, 1, 0))
+		if d <= best_d:
+			best = s
+			best_d = d
+	return best
+
+
+## Non-default piece states (lowered drawbridges, moved rams) for late joiners.
+func piece_states() -> Dictionary:
+	var out := {}
+	for s in get_structures():
+		var st := s.get_state()
+		if not st.is_empty():
+			out[String(s.name)] = st
+	return out
+
+
+func apply_piece_states(states: Dictionary) -> void:
+	for n: String in states:
+		var s := structures_root.get_node_or_null(n) as Structure
+		if s:
+			s.apply_state(states[n])
+		else:
+			pending_piece_states[n] = states[n]
+
+
+@rpc("authority", "call_local", "reliable")
+func piece_open(structure_name: String, value: bool) -> void:
+	var s := structures_root.get_node_or_null(structure_name) as Structure
+	if s:
+		s.set_open(value)
+
+
+@rpc("authority", "call_remote", "unreliable_ordered")
+func vehicle_pose(structure_name: String, pos: Vector3, yaw: float) -> void:
+	var s := structures_root.get_node_or_null(structure_name) as Structure
+	if s:
+		s.set_pose_target(pos, yaw)
 
 
 func ladder_at(p: Vector3) -> Structure:
@@ -104,7 +182,7 @@ func placement_problem(item_id: String, slot: Dictionary, check_players := true)
 	var kind := BuildGrid.kind_of(item_id)
 	if kind == "":
 		return "That can't be built."
-	if slot["level"] < 0 or slot["level"] > BuildGrid.MAX_LEVEL:
+	if slot["level"] < BuildGrid.MIN_LEVEL or slot["level"] > BuildGrid.MAX_LEVEL:
 		return "Too high to build."
 	var center := BuildGrid.center_of(kind, slot)
 	if not GameData.can_build_at(center):
@@ -113,9 +191,13 @@ func placement_problem(item_id: String, slot: Dictionary, check_players := true)
 	var existing: Structure = pieces.get(key)
 	if existing and not existing.is_queued_for_deletion():
 		return "Something is already built there."
+	if BuildGrid.is_buried(kind, slot):
+		return "That would be underground."
+	if kind == "vehicle":
+		return _vehicle_problem(item_id, slot, check_players)
 	var has := func(k: String) -> bool:
 		var p: Structure = pieces.get(k)
-		return p != null and not p.is_queued_for_deletion()
+		return p != null and not p.is_queued_for_deletion() and BuildGrid.supports(p.kind)
 	if not BuildGrid.is_supported(kind, slot, has):
 		return "That needs support: build it on the ground, a floor, or a wall."
 	if check_players and kind != "ladder" and kind != "free":
@@ -154,12 +236,70 @@ func generate(seed_value: int) -> void:
 	if not resource_nodes.is_empty():
 		return
 	map_seed = seed_value
+	Terrain.setup(seed_value)
+	_build_terrain()
+	terrain_ready = true
 	var entries := MapGenerator.generate(seed_value)
 	for i in entries.size():
 		var node := ResourceNode.new()
 		node.setup(i, entries[i]["type"], entries[i]["pos"])
 		resources_root.add_child(node)
 		resource_nodes.append(node)
+	_build_forest()
+
+
+## Draws every tree with one MultiMesh per part (trunks, pine tiers, oak crowns...)
+## instead of thousands of separate meshes.
+func _build_forest() -> void:
+	if Net.is_dedicated():
+		return
+	var groups := {}  # "mesh|color" -> {mesh, color, xfs: [], owners: [[index, is_stump]]}
+	for n in resource_nodes:
+		if n.res_type != "wood":
+			continue
+		var info := ResourceNode.tree_parts(n.index)
+		var base := Transform3D(Basis(Vector3.UP, n.rotation.y), n.position)
+		var entries: Array = info["parts"].duplicate()
+		entries.append(info["stump"])
+		for k in entries.size():
+			var part: Array = entries[k]
+			var key := "%s|%s" % [part[0], (part[1] as Color).to_html()]
+			if not groups.has(key):
+				groups[key] = {"mesh": part[0], "color": part[1], "xfs": [], "owners": []}
+			groups[key]["xfs"].append(base * (part[2] as Transform3D))
+			groups[key]["owners"].append([n.index, k == entries.size() - 1])
+	for key: String in groups:
+		var g: Dictionary = groups[key]
+		var mm := MultiMesh.new()
+		mm.transform_format = MultiMesh.TRANSFORM_3D
+		mm.mesh = ResourceNode.mesh_for(g["mesh"])
+		mm.instance_count = g["xfs"].size()
+		for i in mm.instance_count:
+			var xf: Transform3D = g["xfs"][i]
+			var owner: Array = g["owners"][i]
+			var stump: bool = owner[1]
+			var record := [mm, i, xf]
+			var table := _stump_instances if stump else _tree_instances
+			if not table.has(owner[0]):
+				table[owner[0]] = []
+			table[owner[0]].append(record)
+			mm.set_instance_transform(i, _hidden(xf) if stump else xf)
+		var mmi := MultiMeshInstance3D.new()
+		mmi.multimesh = mm
+		mmi.material_override = Visuals.mat(g["color"])
+		resources_root.add_child(mmi)
+
+
+static func _hidden(xf: Transform3D) -> Transform3D:
+	return Transform3D(Basis().scaled(Vector3.ZERO), xf.origin)
+
+
+## Show a tree standing, or felled (stump only).
+func set_tree_standing(index: int, standing: bool) -> void:
+	for r: Array in _tree_instances.get(index, []):
+		(r[0] as MultiMesh).set_instance_transform(r[1], r[2] if standing else _hidden(r[2]))
+	for r: Array in _stump_instances.get(index, []):
+		(r[0] as MultiMesh).set_instance_transform(r[1], _hidden(r[2]) if standing else r[2])
 
 
 ## Server only: change a node's remaining amount on every peer.
@@ -230,6 +370,50 @@ func fx_arrow(from: Vector3, velocity: Vector3, duration: float) -> void:
 	t.tween_callback(arrow.queue_free)
 
 
+@rpc("authority", "call_local", "unreliable")
+func fx_repair(pos: Vector3) -> void:
+	if Net.is_dedicated():
+		return
+	Sfx.play_at("repair", pos)
+	debris(pos, Color(0.95, 0.85, 0.4), 5)
+
+
+@rpc("authority", "call_local", "unreliable")
+func fx_ram(pos: Vector3) -> void:
+	if Net.is_dedicated():
+		return
+	Sfx.play_at("ram", pos, 4.0)
+	debris(pos, Color(0.5, 0.4, 0.3), 8)
+
+
+## A catapult boulder flying the arc the server simulated, then smashing.
+@rpc("authority", "call_local", "unreliable")
+func fx_boulder(catapult_name: String, from: Vector3, velocity: Vector3, duration: float, radius: float) -> void:
+	if Net.is_dedicated():
+		return
+	var cat := structures_root.get_node_or_null(catapult_name) as Structure
+	if cat:
+		cat.play_fire()
+	Sfx.play_at("catapult", from)
+	var s := SphereMesh.new()
+	s.radius = 0.45
+	s.height = 0.9
+	s.radial_segments = 8
+	s.rings = 4
+	var rock := Visuals.mesh_instance(s, Color(0.5, 0.5, 0.52))
+	fx_root.add_child(rock)
+	rock.global_position = from
+	var g := Vector3(0, -GameData.ARROW_GRAVITY, 0)
+	var t := rock.create_tween()
+	t.tween_method(func(time: float) -> void:
+		rock.global_position = from + velocity * time + 0.5 * g * time * time, 0.0, duration, duration)
+	t.tween_callback(func() -> void:
+		var hit := rock.global_position
+		rock.queue_free()
+		Sfx.play_at("boom", hit, 6.0)
+		debris(hit + Vector3(0, 0.5, 0), Color(0.5, 0.5, 0.52), 10))
+
+
 ## Little flying chips when something is hit.
 func debris(pos: Vector3, color: Color, count := 4) -> void:
 	if Net.is_dedicated():
@@ -296,6 +480,87 @@ func _projectile(mi: MeshInstance3D, from: Vector3, to: Vector3, speed: float) -
 	return duration
 
 
+# --- Terrain ---------------------------------------------------------------------
+
+func _build_terrain() -> void:
+	var size := Terrain.sample_size()
+	var body := StaticBody3D.new()
+	body.name = "Terrain"
+	body.collision_layer = 1
+	body.collision_mask = 0
+	var shape := CollisionShape3D.new()
+	var hm := HeightMapShape3D.new()
+	hm.map_width = size.x
+	hm.map_depth = size.y
+	# The shape is scaled 2x to match the 2 m sample spacing, so heights are halved.
+	var data := PackedFloat32Array()
+	data.resize(size.x * size.y)
+	for iz in size.y:
+		for ix in size.x:
+			data[iz * size.x + ix] = Terrain.sample(ix, iz) / Terrain.SPACING
+	hm.map_data = data
+	shape.shape = hm
+	shape.scale = Vector3.ONE * Terrain.SPACING
+	body.add_child(shape)
+	add_child(body)
+	if Net.is_dedicated():
+		return
+
+	var st := SurfaceTool.new()
+	st.begin(Mesh.PRIMITIVE_TRIANGLES)
+	var x0 := -GameData.MAP_WIDTH * 0.5
+	var z0 := -GameData.MAP_LENGTH * 0.5
+	for iz in size.y - 1:
+		for ix in size.x - 1:
+			var quad := [Vector2i(ix, iz), Vector2i(ix + 1, iz), Vector2i(ix + 1, iz + 1), Vector2i(ix, iz + 1)]
+			for k in [0, 1, 2, 0, 2, 3]:
+				var g: Vector2i = quad[k]
+				var v := Vector3(x0 + g.x * Terrain.SPACING, Terrain.sample(g.x, g.y), z0 + g.y * Terrain.SPACING)
+				st.set_color(_ground_color(g.x, g.y, v))
+				st.add_vertex(v)
+	st.generate_normals()
+	var mi := MeshInstance3D.new()
+	mi.mesh = st.commit()
+	var mat := StandardMaterial3D.new()
+	mat.vertex_color_use_as_albedo = true
+	mat.roughness = 1.0
+	mi.material_override = mat
+	add_child(mi)
+
+	var water := MeshInstance3D.new()
+	var plane := PlaneMesh.new()
+	plane.size = Vector2(GameData.MAP_WIDTH, GameData.MAP_LENGTH)
+	water.mesh = plane
+	var water_mat := StandardMaterial3D.new()
+	water_mat.albedo_color = Color(0.2, 0.45, 0.75, 0.75)
+	water_mat.transparency = BaseMaterial3D.TRANSPARENCY_ALPHA
+	water_mat.roughness = 0.15
+	water_mat.metallic_specular = 0.8
+	water.material_override = water_mat
+	water.position.y = Terrain.WATER_LEVEL
+	water.cast_shadow = GeometryInstance3D.SHADOW_CASTING_SETTING_OFF
+	add_child(water)
+
+
+func _ground_color(ix: int, iz: int, v: Vector3) -> Color:
+	var slope := maxf(absf(Terrain.sample(ix + 1, iz) - Terrain.sample(ix - 1, iz)),
+		absf(Terrain.sample(ix, iz + 1) - Terrain.sample(ix, iz - 1))) / (2.0 * Terrain.SPACING)
+	var grass := Color(0.27, 0.45, 0.2).lerp(Color(0.4, 0.52, 0.27), clampf(v.y / 12.0, 0.0, 1.0))
+	var c := grass
+	if v.y < Terrain.WATER_LEVEL + 0.3:
+		c = Color(0.58, 0.52, 0.38)  # muddy banks and riverbed
+	elif slope > 0.55:
+		c = grass.lerp(Color(0.5, 0.48, 0.44), clampf((slope - 0.55) * 3.0, 0.0, 1.0))  # rock
+	for t in GameData.TEAM_COUNT:
+		var base := Vector2(0, (GameData.BASE_Z + 8.0) * GameData.team_sign(t))
+		var d := Vector2(v.x, v.z).distance_to(base)
+		if d < Terrain.BASE_FLAT_RADIUS:
+			c = c.lerp(GameData.team_color(t), 0.15 * (1.0 - d / Terrain.BASE_FLAT_RADIUS))
+	# A little per-vertex variation so slopes read clearly.
+	var jitter := fmod(absf(sin(ix * 12.9898 + iz * 78.233) * 43758.5453), 1.0) * 0.06 - 0.03
+	return Color(c.r + jitter, c.g + jitter, c.b + jitter)
+
+
 # --- Static arena --------------------------------------------------------------
 
 func _build_arena() -> void:
@@ -311,6 +576,11 @@ func _build_arena() -> void:
 	environment.sky = sky
 	environment.ambient_light_source = Environment.AMBIENT_SOURCE_SKY
 	environment.ambient_light_energy = 0.6
+	# Distance haze: depth on a big map, and hides the far edge.
+	environment.fog_enabled = true
+	environment.fog_light_color = Color(0.72, 0.8, 0.88)
+	environment.fog_density = 0.0007
+	environment.fog_sky_affect = 0.0
 	env.environment = environment
 	add_child(env)
 
@@ -323,23 +593,23 @@ func _build_arena() -> void:
 
 	var w := GameData.MAP_WIDTH
 	var l := GameData.MAP_LENGTH
-	# Ground (extends past the walls so the edge never shows).
-	add_child(Visuals.static_box(Vector3(w + 60, 1, l + 60), Color(0.36, 0.55, 0.27), Vector3(0, -0.5, 0)))
+	# Flat ground outside the walls (the playable terrain is built once the seed is known).
+	var outside := Color(0.33, 0.5, 0.25)
+	add_child(Visuals.box(Vector3(w + 200, 1, 100), outside, Vector3(0, -0.5, l * 0.5 + 50.5)))
+	add_child(Visuals.box(Vector3(w + 200, 1, 100), outside, Vector3(0, -0.5, -l * 0.5 - 50.5)))
+	add_child(Visuals.box(Vector3(100, 1, l), outside, Vector3(w * 0.5 + 50.5, -0.5, 0)))
+	add_child(Visuals.box(Vector3(100, 1, l), outside, Vector3(-w * 0.5 - 50.5, -0.5, 0)))
 	# Boundary palisade.
 	var wall_color := Color(0.4, 0.3, 0.2)
 	add_child(Visuals.static_box(Vector3(w, 6, 1), wall_color, Vector3(0, 3, l * 0.5 + 0.5)))
 	add_child(Visuals.static_box(Vector3(w, 6, 1), wall_color, Vector3(0, 3, -l * 0.5 - 0.5)))
 	add_child(Visuals.static_box(Vector3(1, 6, l), wall_color, Vector3(w * 0.5 + 0.5, 3, 0)))
 	add_child(Visuals.static_box(Vector3(1, 6, l), wall_color, Vector3(-w * 0.5 - 0.5, 3, 0)))
-	# Center line.
-	add_child(Visuals.box(Vector3(w, 0.02, 0.6), Color(0.85, 0.8, 0.6), Vector3(0, 0.01, 0)))
 
 	for t in GameData.TEAM_COUNT:
 		var tc := GameData.team_color(t)
 		var side := GameData.team_sign(t)
 		var crown_pos := GameData.crown_pos(t)
-		# Tinted base courtyard.
-		add_child(Visuals.box(Vector3(GameData.BASE_CLEAR_RADIUS * 2, 0.02, 60), tc.lerp(Color(0.36, 0.55, 0.27), 0.82), Vector3(0, 0.01, side * (GameData.BASE_Z + 10))))
 		# No-build ring around the pedestal.
 		var ring := CylinderMesh.new()
 		ring.top_radius = GameData.NO_BUILD_RADIUS
