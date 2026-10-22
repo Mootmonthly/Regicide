@@ -186,7 +186,7 @@ func _build() -> void:
 	bottom.add_child(_mode_label)
 	bottom.move_child(_mode_label, 1)
 
-	var help := _label("WASD move · Shift sprint · LMB use · RMB block · 1-0 select · Q build · E use · C craft, spells & skills · T talk nearby · Y talk team · V camera · Tab scores", 13)
+	var help := _label("WASD move · Shift sprint · LMB use · RMB block · 1-0 select · Q build · E use · X dash (skill) · C craft, spells & skills · T talk nearby · Y talk team · V camera · Tab scores", 13)
 	help.horizontal_alignment = HORIZONTAL_ALIGNMENT_CENTER
 	bottom.add_child(help)
 

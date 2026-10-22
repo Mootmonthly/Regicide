@@ -1621,10 +1621,24 @@ func _check_movement() -> void:
 		var elapsed := clock - rec.last_move_check
 		var allowed := GameData.MAX_PLAYER_SPEED * 1.5 * elapsed + 1.5  # headroom for Swiftness
 		rec.last_move_check = clock
-		if GameData.flat_distance(p.sync_pos, rec.last_valid_pos) > allowed:
+		var moved := GameData.flat_distance(p.sync_pos, rec.last_valid_pos)
+		if moved > allowed and _dash_explains(rec, p, moved - allowed):
+			moved = 0.0
+		if moved > allowed:
 			_send_to(rec.peer_id, &"_teleport", [rec.last_valid_pos])
 		else:
 			rec.last_valid_pos = p.sync_pos
+
+
+## A player with the Dash skill may cover one dash more than normal, once per recharge.
+func _dash_explains(rec: PlayerRecord, p: Player, excess: float) -> bool:
+	var rank := rec.rank("dash")
+	if rank <= 0 or clock < rec.dash_ready or p.carrying_crown >= 0 or p.mounted:
+		return false
+	if excess > GameData.dash_distance(rank) + 1.0:
+		return false
+	rec.dash_ready = clock + GameData.dash_cooldown(rank) * 0.8  # slack for network delay
+	return true
 
 
 func _scoreboard_rows() -> Array:

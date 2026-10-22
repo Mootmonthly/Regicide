@@ -181,7 +181,11 @@ Toughness (+15 health), Swiftness (+6% speed), Arcane (+25 mana, +1 mana/s), Lum
 (+25% gathering), Mason (-15% building cost), Marksman (+15% bow damage), Spellweaver
 (-10% spell mana and recharge), Bloodlust (melee hits heal 10% of the damage), Iron Will
 (stuns and slows on you 25% shorter), Bounty Hunter (+15 gold per kill), Horsemanship
-(+8% riding speed), per rank.
+(+8% riding speed), per rank. **Dash** is an active skill: press X to burst the way
+you're facing for 25 stamina — 8 m every 5 s at rank 1, +1.5 m and 1 s faster recharge
+per rank. Walls stop it; no dashing while stunned, riding, climbing, wading or
+carrying a crown. The server's speed check allows one dash's worth of extra distance
+per recharge.
 Skills reset with the match.
 
 ## Voice chat

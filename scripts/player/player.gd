@@ -93,6 +93,11 @@ var shield_item := "":
 			_refresh_shield()
 var block_started := -100.0
 
+## Dash skill (owner side): how long the current burst has left, and its direction.
+var _dash_left := 0.0
+var _dash_velocity := Vector3.ZERO
+var _dash_ready := 0.0
+
 ## Sprint stamina (owner side).
 var stamina := GameData.MAX_STAMINA
 var _stamina_pause := 0.0
@@ -315,6 +320,46 @@ func _set_faint(on: bool) -> void:
 			mi.cast_shadow = GeometryInstance3D.SHADOW_CASTING_SETTING_ON
 
 
+## Dash skill: a quick burst the way you're facing. Returns true if it started.
+func try_dash() -> bool:
+	if _game_mode == null:
+		return false
+	var rank := int((_game_mode.my_stats.get("skills", {}) as Dictionary).get("dash", 0))
+	if rank <= 0:
+		return false
+	var why := ""
+	if _game_mode.clock < _dash_ready:
+		why = "Dash recharges in %.1f s." % (_dash_ready - _game_mode.clock)
+	elif stunned or not alive:
+		why = "You can't dash right now."
+	elif carrying_crown >= 0:
+		why = "The crown is too heavy to dash with."
+	elif mounted or on_ladder or in_water():
+		why = "You can't dash here."
+	elif stamina < GameData.DASH_STAMINA:
+		why = "Not enough stamina to dash."
+	if why != "":
+		_hint(why)
+		return false
+	stamina -= GameData.DASH_STAMINA
+	_stamina_pause = 0.8
+	_dash_ready = _game_mode.clock + GameData.dash_cooldown(rank)
+	var forward := -global_basis.z
+	forward.y = 0.0
+	_dash_velocity = forward.normalized() * GameData.dash_distance(rank) / GameData.DASH_TIME
+	_dash_left = GameData.DASH_TIME
+	_dash_fx.rpc()
+	return true
+
+
+@rpc("any_peer", "call_local", "unreliable")
+func _dash_fx() -> void:
+	if Net.is_dedicated() or _world == null:
+		return
+	_world.debris(global_position + Vector3(0, 0.3, 0), Color(0.75, 0.7, 0.6), 8)
+	Sfx.play_at("blink", global_position, -6.0)
+
+
 ## Show the "talking" marker over this player (voice chat).
 func set_speaking(on: bool) -> void:
 	if _speaking_label:
@@ -368,6 +413,8 @@ func _owner_physics(delta: float) -> void:
 			move_input = Input.get_vector("move_left", "move_right", "move_forward", "move_back")
 			wants_jump = Input.is_action_just_pressed("jump")
 			wants_sprint = Input.is_action_pressed("sprint")
+			if Input.is_action_just_pressed("dash"):
+				try_dash()
 		shield_item = _best_shield()
 		blocking = controlling and alive and not stunned and not build_mode and shield_item != "" \
 			and Input.is_action_pressed("block")
@@ -397,6 +444,11 @@ func _owner_physics(delta: float) -> void:
 	var speed := current_speed(sprinting)
 	velocity.x = dir.x * speed
 	velocity.z = dir.z * speed
+	if _dash_left > 0.0:
+		_dash_left -= delta
+		velocity.x = _dash_velocity.x
+		velocity.z = _dash_velocity.z
+		velocity.y = maxf(velocity.y, 0.0)  # skim the ground instead of dropping
 	move_and_slide()
 
 	position.x = clampf(position.x, -GameData.MAP_WIDTH * 0.5 + 0.5, GameData.MAP_WIDTH * 0.5 - 0.5)

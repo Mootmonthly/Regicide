@@ -453,6 +453,7 @@ const SKILLS := {
 	"iron_will": {"name": "Iron Will", "max_rank": 3, "desc": "Stuns and slows on you wear off 25% sooner per rank."},
 	"bounty_hunter": {"name": "Bounty Hunter", "max_rank": 3, "desc": "+15 gold per kill per rank."},
 	"horsemanship": {"name": "Horsemanship", "max_rank": 3, "desc": "+8% riding speed per rank."},
+	"dash": {"name": "Dash", "max_rank": 3, "desc": "Press X to dash the way you're facing (25 stamina). Rank 1: 8 m every 5 s; each rank adds 1.5 m and recharges 1 s faster."},
 }
 
 const ITEM_KINDS := ["tool", "weapon", "ranged", "ammo", "shield", "structure", "consumable", "spell"]
@@ -494,6 +495,19 @@ static func spell_cooldown(def: Dictionary, spellweaver_rank: int) -> float:
 ## How long casting a spell keeps your hands busy (its own recharge is separate).
 static func spell_cast_time(def: Dictionary) -> float:
 	return minf(float(def["cooldown"]), 1.0)
+
+
+## The Dash skill, by rank.
+const DASH_STAMINA := 25.0
+const DASH_TIME := 0.2  ## seconds the burst lasts
+
+
+static func dash_distance(rank: int) -> float:
+	return 8.0 + 1.5 * (rank - 1)
+
+
+static func dash_cooldown(rank: int) -> float:
+	return 5.0 - 1.0 * (rank - 1)
 
 
 static func skill_cost(rank_now: int) -> int:

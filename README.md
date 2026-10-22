@@ -38,6 +38,7 @@ The default port is **24565** (UDP). Open it on the host's router to play over t
 | Key | Action |
 | --- | --- |
 | WASD / Shift / Space | Move / sprint (uses stamina) / jump |
+| X | Dash the way you're facing (needs the Dash skill; uses stamina) |
 | Mouse | Look (first person; V toggles third person) |
 | Left click | Swing, shoot, cast, gather, place a structure, or use an item (whatever is equipped) |
 | Right click (hold) | Raise your shield to block; raise it just as a blow lands to parry |
@@ -82,7 +83,8 @@ The default port is **24565** (UDP). Open it on the host's router to play over t
 - **Skills.** Kills earn 1 skill point and captures 3. Spend them on Toughness,
   Swiftness, Arcane, Lumberjack, Mason (cheaper building), Marksman, Spellweaver
   (cheaper, faster spells), Bloodlust (melee hits heal you), Iron Will (shorter stuns),
-  Bounty Hunter (more gold per kill) and Horsemanship (faster riding).
+  Bounty Hunter (more gold per kill), Horsemanship (faster riding) and Dash (press X
+  to burst forward).
 - **Voice chat.** Hold T to talk to everyone near you — positional 3D audio that fades
   with distance, enemies included — or Y for your whole team.
 - **Steal the crown.** Touch the enemy crown to grab it. You move slower while carrying it,

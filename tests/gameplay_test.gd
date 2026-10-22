@@ -711,6 +711,44 @@ func _run() -> void:
 	await _frames(2)
 	check(ride > me.current_speed(false) * 1.07, "Horsemanship: riding is faster")
 	me.mounted = false
+	# Dash: a burst the way you face; the server's speed check lets it through.
+	check(not me.try_dash(), "no dashing without the Dash skill")
+	check(gm.perform_skill(1, "dash"), "learn Dash")
+	await _frames(2)
+	var dash_from := _place(me, Vector3(-60, 0, 60), Vector3(-60, 0, 0))
+	dash_from = me.position
+	me.stamina = GameData.MAX_STAMINA
+	await _frames(2)
+	check(me.try_dash(), "dash")
+	check(is_equal_approx(me.stamina, GameData.MAX_STAMINA - GameData.DASH_STAMINA), "dashing costs stamina")
+	check(not me.try_dash(), "dash has to recharge")
+	await _frames(20)
+	var dashed := dash_from.z - me.position.z
+	check(dashed > 7.0 and dashed < 9.5, "dash covers about 8 m forward (%.1f m)" % dashed)
+	await _frames(45)  # past a server movement check
+	check(dash_from.z - me.position.z > 7.0, "the server accepts the dash (no snap back)")
+	# A move a bit beyond normal speed is accepted once per recharge, as a dash.
+	var over := GameData.MAX_PLAYER_SPEED * 1.5 * 0.5 + 1.5 + 5.0
+	rec.dash_ready = 0.0
+	rec.last_move_check = gm.clock - 0.5
+	rec.last_valid_pos = me.sync_pos + Vector3(0, 0, over)
+	gm._check_movement()
+	check(rec.last_valid_pos.distance_to(me.sync_pos) < 0.01, "the speed check allows one dash's worth of extra distance")
+	var stay := me.sync_pos
+	rec.last_move_check = gm.clock - 0.5
+	rec.last_valid_pos = me.sync_pos + Vector3(0, 0, over)
+	gm._check_movement()
+	await _frames(2)
+	check(me.sync_pos.distance_to(stay) > over - 1.0, "but not again until it recharges (snapped back)")
+	_place(me, stay, stay + Vector3(0, 0, -10))
+	gm.crowns[1].state = CrownRules.State.CARRIED
+	gm.crowns[1].carrier = 1
+	me.carrying_crown = 1
+	me._dash_ready = 0.0
+	check(not me.try_dash(), "no dashing with a crown")
+	gm.crowns[1].send_home()
+	me.carrying_crown = -1
+	gm._sync_crowns()
 	gm._respawn(ENEMY)
 	erec.protected_until = 0.0
 	enemy.health = enemy.max_health

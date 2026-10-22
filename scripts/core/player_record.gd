@@ -63,6 +63,7 @@ var rally_until := 0.0
 var cloak_until := 0.0
 var ward_amount := 0.0
 var ward_until := 0.0
+var dash_ready := 0.0  ## server's view of when this player's Dash recharges
 
 
 ## How long a stun or slow lasts on this player, after Iron Will.
