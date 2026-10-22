@@ -19,7 +19,7 @@ jobs:
       - name: Import project
         run: godot --headless --path . --import
       - name: Unit tests
-        run: timeout 120 godot --headless --path . -s res://tests/run_tests.gd
+        run: timeout 120 godot --headless --path . res://tests/run_tests.tscn
       - name: Gameplay test
         run: timeout 300 godot --headless --path . res://tests/gameplay_test.tscn
       - name: Multiplayer smoke test

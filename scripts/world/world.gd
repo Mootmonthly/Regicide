@@ -10,6 +10,9 @@ var map_seed := 0
 var resource_nodes: Array[ResourceNode] = []
 var crown_nodes: Array[Crown] = []
 var hud: Hud
+## Every standing building piece by its BuildGrid slot key (kept on every peer).
+var pieces: Dictionary = {}
+var ladders: Array[Structure] = []
 var _player_scene: PackedScene
 
 @onready var game_mode: GameMode = $GameMode
@@ -72,6 +75,56 @@ func get_structures() -> Array[Structure]:
 
 func local_player() -> Player:
 	return get_player(multiplayer.get_unique_id())
+
+
+# --- Building ----------------------------------------------------------------
+
+func register_piece(s: Structure) -> void:
+	pieces[s.slot_key] = s
+	if s.is_ladder():
+		ladders.append(s)
+
+
+func unregister_piece(s: Structure) -> void:
+	if pieces.get(s.slot_key) == s:
+		pieces.erase(s.slot_key)
+	ladders.erase(s)
+
+
+func ladder_at(p: Vector3) -> Structure:
+	for l in ladders:
+		if not l.is_queued_for_deletion() and l.ladder_contains(p):
+			return l
+	return null
+
+
+## Why a piece can't go in a slot, or "" if it can. Checks bounds, the crown no-build
+## zone, occupancy, structural support, and (optionally) players standing in the way.
+func placement_problem(item_id: String, slot: Dictionary, check_players := true) -> String:
+	var kind := BuildGrid.kind_of(item_id)
+	if kind == "":
+		return "That can't be built."
+	if slot["level"] < 0 or slot["level"] > BuildGrid.MAX_LEVEL:
+		return "Too high to build."
+	var center := BuildGrid.center_of(kind, slot)
+	if not GameData.can_build_at(center):
+		return "You can't build there."
+	var key := BuildGrid.key(kind, slot)
+	var existing: Structure = pieces.get(key)
+	if existing and not existing.is_queued_for_deletion():
+		return "Something is already built there."
+	var has := func(k: String) -> bool:
+		var p: Structure = pieces.get(k)
+		return p != null and not p.is_queued_for_deletion()
+	if not BuildGrid.is_supported(kind, slot, has):
+		return "That needs support: build it on the ground, a floor, or a wall."
+	if check_players and kind != "ladder" and kind != "free":
+		var box := BuildGrid.transform_for(kind, slot) * Structure.local_bounds(item_id)
+		box = box.grow(-0.1)
+		for p in get_players():
+			if p.alive and box.intersects(AABB(p.sync_pos + Vector3(-0.35, 0.1, -0.35), Vector3(0.7, 1.7, 0.7))):
+				return "Someone is in the way."
+	return ""
 
 
 # --- Spawning (runs on every peer with the same data) ---------------------

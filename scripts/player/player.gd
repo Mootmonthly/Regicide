@@ -13,6 +13,7 @@ const JUMP_VELOCITY := 6.0
 const GRAVITY := 18.0
 const MOUSE_SENSITIVITY := 0.0025
 const REMOTE_SMOOTHING := 15.0
+const CLIMB_SPEED := 4.0
 
 var peer_id := 1
 var team := 0
@@ -56,6 +57,9 @@ var wants_sprint := false
 var wants_jump := false
 
 var hotbar_index := 0
+## Build mode swaps the hotbar for building pieces (toggle with Q).
+var build_mode := false
+var on_ladder := false
 
 var _game_mode: GameMode
 var _pivot: Node3D
@@ -65,10 +69,16 @@ var _body_mesh: MeshInstance3D
 var _hand: Node3D
 var _weapon: MeshInstance3D
 var _horse: Node3D
-var _ghost: MeshInstance3D
-var _ghost_mesh: BoxMesh
+var _world: World
+var _ghost: Node3D
+var _ghost_item := ""
+var _ghost_slot: Dictionary = {}
 var _ghost_ok: StandardMaterial3D
 var _ghost_bad: StandardMaterial3D
+var _ghost_valid := false
+var _ghost_problem := ""
+var _saved_weapon_index := 0
+var _next_hint_time := 0.0
 var _next_action_time := 0.0
 var _swing_tween: Tween
 var _flash_tween: Tween
@@ -83,6 +93,8 @@ func _enter_tree() -> void:
 
 func _ready() -> void:
 	_game_mode = get_tree().get_first_node_in_group("game_mode") as GameMode
+	_world = get_parent().get_parent() as World
+	floor_constant_speed = true  # same pace up stairs and ramps
 	collision_layer = 2  # players
 	# World, structures, resources, and the enemy team's gates. Players pass through each other.
 	collision_mask = 1 | 4 | 8 | GameData.gate_layer(1 - team)
@@ -102,7 +114,8 @@ func _ready() -> void:
 	sync_yaw = rotation.y
 	if is_local():
 		_build_camera()
-		_build_ghost()
+		_ghost_ok = Visuals.mat(Color(0.3, 1.0, 0.4, 0.35))
+		_ghost_bad = Visuals.mat(Color(1.0, 0.3, 0.3, 0.35))
 		Input.mouse_mode = Input.MOUSE_MODE_CAPTURED
 
 
@@ -159,7 +172,13 @@ func _owner_physics(delta: float) -> void:
 			move_input = Input.get_vector("move_left", "move_right", "move_forward", "move_back")
 			wants_jump = Input.is_action_just_pressed("jump")
 			wants_sprint = Input.is_action_pressed("sprint")
-	if not is_on_floor():
+	# Ladders: hold forward to climb, back to climb down.
+	on_ladder = _world != null and _world.ladder_at(position) != null
+	if on_ladder and (move_input.y < -0.1 or not is_on_floor()):
+		velocity.y = -move_input.y * CLIMB_SPEED
+		if wants_jump:
+			velocity.y = JUMP_VELOCITY * 0.6
+	elif not is_on_floor():
 		velocity.y -= GRAVITY * delta
 	elif wants_jump:
 		velocity.y = JUMP_VELOCITY
@@ -186,13 +205,13 @@ func _process(_delta: float) -> void:
 	if not is_local() or _game_mode == null:
 		return
 	# Keep the equipped item valid as the inventory changes.
-	var bar := _game_mode.hotbar_items()
+	var bar := _game_mode.hotbar_items(build_mode)
 	if hotbar_index < bar.size() and bar[hotbar_index] == equipped:
 		return
 	var idx := bar.find(equipped)
 	if idx == -1:
 		hotbar_index = 0
-		equipped = ""
+		equipped = bar[0] if not bar.is_empty() else ""
 	else:
 		hotbar_index = idx
 
@@ -214,18 +233,34 @@ func _unhandled_input(event: InputEvent) -> void:
 			Input.mouse_mode = Input.MOUSE_MODE_CAPTURED
 			get_viewport().set_input_as_handled()
 		return
-	for i in 9:
+	if event.is_action_pressed("build_mode"):
+		set_build_mode(not build_mode)
+		return
+	for i in 10:
 		if event.is_action_pressed("hotbar_%d" % (i + 1)):
 			select_slot(i)
 			return
+	var count := maxi(_game_mode.hotbar_items(build_mode).size(), 1)
 	if captured and event.is_action_pressed("next_slot"):
-		select_slot(wrapi(hotbar_index + 1, 0, _game_mode.hotbar_items().size()))
+		select_slot(wrapi(hotbar_index + 1, 0, count))
 	elif captured and event.is_action_pressed("prev_slot"):
-		select_slot(wrapi(hotbar_index - 1, 0, _game_mode.hotbar_items().size()))
+		select_slot(wrapi(hotbar_index - 1, 0, count))
+
+
+func set_build_mode(on: bool) -> void:
+	if on == build_mode:
+		return
+	if on:
+		_saved_weapon_index = hotbar_index
+	build_mode = on
+	select_slot(0 if on else _saved_weapon_index)
+	if hotbar_index >= _game_mode.hotbar_items(build_mode).size():
+		select_slot(0)
+	Sfx.play("click", -8.0)
 
 
 func select_slot(i: int) -> void:
-	var bar := _game_mode.hotbar_items()
+	var bar := _game_mode.hotbar_items(build_mode)
 	if i >= 0 and i < bar.size():
 		hotbar_index = i
 		equipped = bar[i]
@@ -242,15 +277,15 @@ func _try_primary() -> void:
 		equipped = ""
 		return
 	var kind: String = def["kind"]
-	var target := build_target()
-	if kind == "structure" and not GameData.can_build_at(target):
+	if kind == "structure":
+		_try_build(def)
 		return
 	if kind == "ranged" and int(_game_mode.my_inventory.get(def["ammo"], 0)) <= 0:
 		_game_mode.message_received.emit("Out of arrows! Craft more in the menu (C).")
 		_next_action_time = _game_mode.clock + 1.0
 		return
 	_next_action_time = _game_mode.clock + float(def.get("cooldown", 1.0))
-	_game_mode.request(&"request_primary", [equipped, aim_direction(), target])
+	_game_mode.request(&"request_primary", [equipped, aim_direction(), Vector3.ZERO])
 	play_action_anim(kind)
 
 
@@ -267,21 +302,38 @@ func aim_direction() -> Vector3:
 	return -global_basis.z
 
 
-## Where a structure would be placed: where the crosshair meets the ground, 2.5-8m ahead.
-func build_target() -> Vector3:
-	var forward := -global_basis.z
-	forward.y = 0.0
-	forward = forward.normalized()
-	var dist := 4.0
-	if _camera:
-		var origin := _camera.global_position
-		var dir := aim_direction()
-		if dir.y < -0.05:
-			var hit := origin + dir * (-origin.y / dir.y)
-			dist = clampf(GameData.flat_distance(hit, global_position), 2.5, 8.0)
-	var p := global_position + forward * dist
-	p.y = 0.0
-	return p
+func _try_build(def: Dictionary) -> void:
+	if _ghost_slot.is_empty():
+		return
+	if not _ghost_valid:
+		_hint(_ghost_problem)
+		return
+	_next_action_time = _game_mode.clock + 0.25
+	_game_mode.request(&"request_build", [equipped, _ghost_slot])
+
+
+func _hint(text: String) -> void:
+	if text != "" and _game_mode.clock >= _next_hint_time:
+		_next_hint_time = _game_mode.clock + 1.5
+		_game_mode.message_received.emit(text)
+
+
+## The grid slot under the crosshair for the equipped piece.
+func current_build_slot() -> Dictionary:
+	if _camera == null or BuildGrid.kind_of(equipped) == "":
+		return {}
+	var from := _camera.global_position
+	var dir := aim_direction()
+	var query := PhysicsRayQueryParameters3D.create(from, from + dir * (BuildGrid.REACH + 4.0), 1 | 4 | 16 | 32)
+	query.exclude = [get_rid()]
+	var hit := get_world_3d().direct_space_state.intersect_ray(query)
+	var point: Vector3
+	if hit.is_empty():
+		var flat := Vector3(dir.x, 0, dir.z).normalized()
+		point = global_position + flat * 5.0
+	else:
+		point = hit["position"] + hit["normal"] * 0.05
+	return BuildGrid.slot_for(equipped, point, dir, global_position)
 
 
 @rpc("authority", "call_remote", "unreliable")
@@ -451,28 +503,37 @@ func _build_camera() -> void:
 	_camera.current = true
 
 
-func _build_ghost() -> void:
-	_ghost_mesh = BoxMesh.new()
-	_ghost = MeshInstance3D.new()
-	_ghost.mesh = _ghost_mesh
-	_ghost.top_level = true
-	_ghost.visible = false
-	_ghost_ok = Visuals.mat(Color(0.3, 1.0, 0.4, 0.35))
-	_ghost_bad = Visuals.mat(Color(1.0, 0.3, 0.3, 0.35))
-	add_child(_ghost)
-
-
 func _update_ghost() -> void:
-	if _ghost == null:
+	if not is_local():
 		return
-	var def := GameData.item(equipped)
-	_ghost.visible = alive and def.get("kind", "") == "structure"
-	if not _ghost.visible:
+	var showing := alive and build_mode and BuildGrid.kind_of(equipped) != ""
+	if not showing:
+		if _ghost:
+			_ghost.visible = false
+		_ghost_slot = {}
 		return
-	var size: Vector3 = def["size"]
-	if _ghost_mesh.size != size:
-		_ghost_mesh.size = size
-	var target := build_target()
-	_ghost.global_position = target + Vector3(0, size.y * 0.5, 0)
-	_ghost.global_rotation = Vector3(0, GameData.snap_yaw(rotation.y), 0)
-	_ghost.material_override = _ghost_ok if GameData.can_build_at(target) else _ghost_bad
+	if _ghost == null or _ghost_item != equipped:
+		if _ghost:
+			_ghost.queue_free()
+		_ghost_item = equipped
+		_ghost = Structure.make_ghost(equipped, team, _ghost_ok)
+		_ghost.top_level = true
+		add_child(_ghost)
+	_ghost_slot = current_build_slot()
+	var kind := BuildGrid.kind_of(equipped)
+	_ghost.visible = true
+	_ghost.global_transform = BuildGrid.transform_for(kind, _ghost_slot)
+	_ghost_problem = _world.placement_problem(equipped, _ghost_slot)
+	if _ghost_problem == "" and chest().distance_to(BuildGrid.center_of(kind, _ghost_slot)) > BuildGrid.REACH:
+		_ghost_problem = "Too far away."
+	if _ghost_problem == "":
+		var recipe: Dictionary = GameData.item(equipped)["recipe"]
+		for res: String in recipe:
+			if int(_game_mode.my_inventory.get(res, 0)) < int(recipe[res]):
+				_ghost_problem = "Not enough resources: needs %s." % GameData.cost_text(recipe)
+				break
+	var valid := _ghost_problem == ""
+	if valid != _ghost_valid or _ghost.get_child(0).material_override != (_ghost_ok if valid else _ghost_bad):
+		for c in _ghost.get_children():
+			(c as MeshInstance3D).material_override = _ghost_ok if valid else _ghost_bad
+	_ghost_valid = valid

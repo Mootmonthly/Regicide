@@ -20,6 +20,19 @@ clients call `GameMode.request(...)` (`request_primary`, `request_craft`,
 `request_unlock`), and the server checks ownership, cooldowns, range and cost before
 changing anything. The host's own requests take the same path, run as local calls.
 
+## Building
+
+`BuildGrid` (pure, unit tested) turns a crosshair hit into a slot `{i, j, level, axis,
+rot, side}`, gives each slot a key, a transform, and the support rules. The client sends
+`request_build(item, slot)`; the server sanitizes the slot, checks reach, support,
+occupancy, crown zone and players in the way, charges resources, then spawns a
+`Structure`. Every peer keeps `World.pieces` (slot key → piece) for ghost previews and
+validation. When a piece is destroyed the server recomputes which pieces are still
+connected to the ground (`BuildGrid.supported_keys`) and drops the rest.
+
+`Structure.piece_boxes()` defines each piece as boxes (solid and/or visual), used for
+collision, the ghost, arrow/fireball blocking (`blocks_point`), and melee reach.
+
 ## Bots
 
 Bots are ordinary `Player` nodes with negative peer ids, owned by the server. A
@@ -58,8 +71,9 @@ fast-forward a 10-minute match with `--fixed-fps`.
 
 ## Physics layers
 
-1 world · 2 players · 3 structures · 4 resources · 5 Azure gates · 6 Crimson gates.
-Players collide with the *enemy* team's gate layer only. Players don't collide with each
+1 world · 2 players · 3 structures · 4 resources · 5 Azure doors · 6 Crimson doors.
+Players collide with the *enemy* team's door layer only. Ladders and traps have no
+collision (ladders are detected by position for climbing). Players don't collide with each
 other (100 bodies in chokepoints would gridlock). Spike traps have no collision.
 
 ## Scaling notes for 100 players

@@ -16,7 +16,7 @@ const THINK_INTERVAL := 0.3
 ## How close an enemy must be before this role stops what it's doing to fight.
 ## Attackers mostly ignore fights and push for the crown.
 const AGGRO := {Role.GATHERER: 12.0, Role.ATTACKER: 7.0, Role.DEFENDER: 22.0}
-const PLACE_RANGE := 6.0
+
 const ATTACK_AFTER := 100.0  ## attackers go for the crown by now even if poorly armed
 const GATHERERS_JOIN_AFTER := 240.0
 ## Attackers rally near the middle, then charge together for WAVE_CHARGE seconds
@@ -34,9 +34,7 @@ const WISHLIST := {
 		["shortbow", 1], ["arrow", 10], ["health_potion", 1], ["skillbook_vigor", 1]],
 	Role.ATTACKER: [["pickaxe", 1], ["iron_sword", 1], ["horse_saddle", 1], ["health_potion", 2],
 		["war_hammer", 1], ["scroll_fireball", 1]],
-	Role.DEFENDER: [["pickaxe", 1], ["shortbow", 1], ["arrow", 20], ["wooden_wall", 2],
-		["ballista", 1], ["stone_wall", 2], ["spike_trap", 2], ["wooden_gate", 1], ["iron_sword", 1],
-		["crossbow", 1]],
+	Role.DEFENDER: [["pickaxe", 1], ["shortbow", 1], ["arrow", 20], ["iron_sword", 1], ["crossbow", 1]],
 }
 const SHOPPING := {
 	Role.GATHERER: ["skillbook_gatherer", "health_potion", "skillbook_vigor"],
@@ -44,7 +42,13 @@ const SHOPPING := {
 	Role.DEFENDER: ["ballista", "spike_trap", "health_potion", "crossbow"],
 }
 const MELEE_PREFERENCE := ["war_hammer", "iron_sword", "wooden_club", "stone_axe", "pickaxe"]
-const BUILD_PREFERENCE := ["ballista", "spike_trap", "stone_wall", "wooden_gate", "wooden_wall"]
+## Resources a role keeps on hand once its wishlist is done (building is paid on placement).
+const RESERVES := {
+	Role.GATHERER: {},
+	Role.ATTACKER: {"wood": 8},  # two ladders
+	Role.DEFENDER: {"stone": 30, "wood": 30},
+}
+const RING := 3  ## defensive wall ring half-size, in cells
 
 var player: Player
 var gm: GameMode
@@ -56,8 +60,8 @@ var stop_distance := 1.0
 var target: Node = null
 
 var _build_item := ""
-var _build_spot := Vector3.ZERO
-var _build_aim := Vector3.FORWARD
+var _build_slot: Dictionary = {}
+var _climb_timer := 0.0
 var _think_timer := 0.0
 var _stuck_timer := 0.0
 var _last_pos := Vector3.ZERO
@@ -171,7 +175,10 @@ func _think() -> void:
 		acting_role = Role.ATTACKER
 	match acting_role:
 		Role.ATTACKER:
-			if _armed(rec) or _match_time() > ATTACK_AFTER:
+			var deep := player.sync_pos.z * GameData.team_sign(player.team) < 0.0
+			if rec.inventory.count("wood") < 8 and not deep and not _charging():
+				_plan_gather(rec, "wood")  # wood for ladders before heading out
+			elif _armed(rec) or _match_time() > ATTACK_AFTER:
 				_plan_attack(theirs)
 			else:
 				_plan_gather(rec)
@@ -248,8 +255,9 @@ func _plan_guard() -> void:
 	_go(Task.GUARD, Vector3(spot.x, 0, spot.z), 1.5)
 
 
-func _plan_gather(rec: PlayerRecord) -> void:
-	var wanted := _needed_resource(rec)
+func _plan_gather(rec: PlayerRecord, wanted := "") -> void:
+	if wanted == "":
+		wanted = _needed_resource(rec)
 	var best: ResourceNode = null
 	var best_d := INF
 	var me := player.sync_pos
@@ -274,62 +282,59 @@ func _plan_gather(rec: PlayerRecord) -> void:
 		_plan_guard()
 
 
-## Picks the closest free slot in the team's defensive layout around its crown.
+## Picks the nearest buildable piece of the team's defensive layout that we can afford.
 func _plan_build(rec: PlayerRecord) -> bool:
-	_build_item = ""
-	for id: String in BUILD_PREFERENCE:
-		if rec.inventory.count(id) > 0:
-			_build_item = id
-			break
-	if _build_item == "":
-		return false
 	if task == Task.BUILD:
 		return true
 	var best_d := INF
-	var structures := world.get_structures()
-	for slot: Array in build_slots(player.team, _build_item):
-		var spot: Vector3 = slot[0]
-		var taken := false
-		for st in structures:
-			if st.distance_to_point(spot) < 1.5:
-				taken = true
-				break
-		if taken:
+	for entry: Array in build_plan(player.team, rec):
+		var item: String = entry[0]
+		var slot: Dictionary = entry[1]
+		if not rec.is_unlocked(item) or not rec.inventory.has_all(GameData.item(item)["recipe"]):
 			continue
-		var d := player.sync_pos.distance_to(spot)
+		if world.placement_problem(item, slot, false) != "":
+			continue
+		var d := player.sync_pos.distance_to(BuildGrid.center_of(BuildGrid.kind_of(item), slot))
 		if d < best_d:
 			best_d = d
-			_build_spot = spot
-			_build_aim = slot[1]
+			_build_item = item
+			_build_slot = slot
 	if best_d == INF:
-		return false  # layout is full
-	_go(Task.BUILD, _build_spot - _build_aim * 3.0, 0.8)
+		return false
+	var center := BuildGrid.center_of(BuildGrid.kind_of(_build_item), _build_slot)
+	var home := GameData.crown_pos(player.team)
+	var inward := Vector3(home.x - center.x, 0, home.z - center.z).normalized()
+	_go(Task.BUILD, center + inward * 2.5, 1.0)
 	return true
 
 
-## [spot, outward direction] pairs. Walls are spaced so there are walking gaps between
-## them; turrets and traps sit inside the ring.
-static func build_slots(team: int, item_id: String) -> Array:
+## A square ring of walls (with walking gaps) around the crown, ballistas inside the
+## front corners, and spike traps outside the front gaps. [item, slot] pairs.
+static func build_plan(team: int, rec: PlayerRecord) -> Array:
 	var home := GameData.crown_pos(team)
-	var center := Vector3(home.x, 0, home.z)
-	var toward_middle := Vector3(0, 0, -GameData.team_sign(team))
-	var rings: Array = []  # [radius, first angle, last angle, step]
-	match item_id:
-		"ballista":
-			rings = [[9.0, -0.9, 0.9, 0.9]]
-		"spike_trap":
-			rings = [[7.5, -1.0, 1.0, 0.5]]
-		"stone_wall":
-			rings = [[20.0, -1.25, 1.25, 0.35]]
-		_:
-			rings = [[13.0, -1.75, 1.75, 0.5]]
+	var ci := roundi(home.x / BuildGrid.CELL)
+	var cj := roundi(home.z / BuildGrid.CELL)
+	var s := int(GameData.team_sign(team))
+	var front_j := cj - RING - 1 if s > 0 else cj + RING
+	var back_j := cj + RING if s > 0 else cj - RING - 1
+	var wall := "stone_wall" if rec == null or rec.inventory.count("stone") >= 10 else "wood_wall"
 	var out := []
-	for ring: Array in rings:
-		var angle: float = ring[1]
-		while angle <= ring[2] + 0.001:
-			var dir := toward_middle.rotated(Vector3.UP, angle)
-			out.append([center + dir * float(ring[0]), dir])
-			angle += float(ring[3])
+	for i in range(ci - RING, ci + RING + 1):
+		if absi(i - ci) != 2:  # gaps to walk through
+			out.append([wall, BuildGrid.make_slot(i, front_j, 0, 0)])
+	for j in range(cj - RING, cj + RING + 1):
+		if j != cj:
+			out.append([wall, BuildGrid.make_slot(ci + RING, j, 0, 1)])
+			out.append([wall, BuildGrid.make_slot(ci - RING - 1, j, 0, 1)])
+	for i in range(ci - RING, ci + RING + 1):
+		if i != ci:
+			out.append([wall, BuildGrid.make_slot(i, back_j, 0, 0)])
+	var inside_front := cj - s * 2
+	out.append(["ballista", BuildGrid.make_slot(ci - 2, inside_front, 0)])
+	out.append(["ballista", BuildGrid.make_slot(ci + 2, inside_front, 0)])
+	var outside_front := cj - s * (RING + 1)
+	out.append(["spike_trap", BuildGrid.make_slot(ci - 2, outside_front, 0)])
+	out.append(["spike_trap", BuildGrid.make_slot(ci + 2, outside_front, 0)])
 	return out
 
 
@@ -391,7 +396,10 @@ func _needed_resource(rec: PlayerRecord) -> String:
 				worst_gap = gap
 		if worst != "":
 			return worst
-	# Nothing specific: stockpile for walls.
+	var reserves: Dictionary = RESERVES[role]
+	for res: String in reserves:
+		if rec.inventory.count(res) < int(reserves[res]) and (has_pick or res in ["wood", "stone"]):
+			return res
 	return "stone" if rec.inventory.count("stone") < rec.inventory.count("wood") else "wood"
 
 
@@ -459,15 +467,20 @@ func _steer(delta: float) -> void:
 	var moving := task != Task.IDLE and dist > stop_distance
 	var move_dir := to_goal.normalized() if moving else Vector3.ZERO
 
+	_climb_timer -= delta
 	if _detour_timer > 0.0:
 		_detour_timer -= delta
 		move_dir = _detour
-	elif moving:
+	elif moving and _climb_timer <= 0.0:
 		var blocker := _probe(move_dir)
 		if blocker is Structure and (blocker as Structure).team != player.team:
-			_go(Task.SIEGE, (blocker as Structure).closest_point(me), 1.5, blocker)
-			moving = false
-			move_dir = Vector3.ZERO
+			var wall := blocker as Structure
+			if _try_ladder(wall):
+				_climb_timer = 4.0  # keep pushing forward: up the ladder and over
+			else:
+				_go(Task.SIEGE, wall.closest_point(me), 1.5, blocker)
+				moving = false
+				move_dir = Vector3.ZERO
 		elif blocker != null:
 			var side := 1.0 if (absi(player.peer_id) + int(gm.clock)) % 2 == 0 else -1.0
 			_detour = move_dir.rotated(Vector3.UP, side * deg_to_rad(75.0))
@@ -487,13 +500,31 @@ func _steer(delta: float) -> void:
 	if is_instance_valid(target) and not moving:
 		var tp := _target_point()
 		face = Vector3(tp.x - me.x, 0, tp.z - me.z).normalized()
-	elif task == Task.BUILD and not moving:
-		face = _build_aim
 	if face.length_squared() > 0.01:
 		player.rotation.y = lerp_angle(player.rotation.y, atan2(-face.x, -face.z), clampf(delta * 12.0, 0.0, 1.0))
 	var local := player.global_basis.inverse() * move_dir
 	player.move_input = Vector2(local.x, local.z)
 	player.wants_sprint = moving and dist > 5.0
+
+
+## Throw a ladder against an enemy wall in our way. Attackers only.
+func _try_ladder(wall: Structure) -> bool:
+	if role != Role.ATTACKER or wall.kind != "wall" and wall.kind != "door":
+		return false
+	var rec := _rec()
+	var me := player.sync_pos
+	var slot := wall.slot.duplicate()
+	var line := wall.global_position
+	if slot["axis"] == 0:
+		slot["side"] = 1 if me.z > line.z else -1
+	else:
+		slot["side"] = 1 if me.x > line.x else -1
+	var key := BuildGrid.key("ladder", slot)
+	if world.pieces.has(key):
+		return true  # already a ladder here: climb it
+	if rec == null or rec.inventory.count("wood") < 4:
+		return false
+	return gm.perform_build(player.peer_id, "ladder", slot)
 
 
 func _probe(dir: Vector3) -> Object:
@@ -548,10 +579,10 @@ func _act() -> void:
 			else:
 				goal = cp
 		Task.BUILD:
-			if GameData.flat_distance(player.sync_pos, _build_spot) <= PLACE_RANGE:
+			var center := BuildGrid.center_of(BuildGrid.kind_of(_build_item), _build_slot)
+			if player.chest().distance_to(center) <= BuildGrid.REACH - 1.0:
 				player.equipped = _build_item
-				var ok := gm.perform_primary(player.peer_id, _build_item, _build_aim, _build_spot)
-				if not ok:
+				if not gm.perform_build(player.peer_id, _build_item, _build_slot):
 					rec.next_action_time = gm.clock + 0.3
 				task = Task.IDLE
 		_:

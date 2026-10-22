@@ -31,6 +31,8 @@ var _minimap: Minimap
 var _last_health := -1.0
 var _last_crown_states: Array = []
 var _crosshair_tween: Tween
+var _hotbar_build_mode := false
+var _mode_label: Label
 
 
 func _ready() -> void:
@@ -163,10 +165,15 @@ func _build() -> void:
 
 	_hotbar = HBoxContainer.new()
 	_hotbar.alignment = BoxContainer.ALIGNMENT_CENTER
-	_hotbar.add_theme_constant_override("separation", 6)
+	_hotbar.add_theme_constant_override("separation", 4)
 	bottom.add_child(_hotbar)
 
-	var help := _label("WASD move · Shift sprint · Space jump · LMB use · 1-9 / wheel select · C craft & shop · Tab scores · Esc free mouse", 13)
+	_mode_label = _label("", 16)
+	_mode_label.horizontal_alignment = HORIZONTAL_ALIGNMENT_CENTER
+	bottom.add_child(_mode_label)
+	bottom.move_child(_mode_label, 1)
+
+	var help := _label("WASD move · Shift sprint · Space jump · LMB use · 1-0 / wheel select · Q build mode · C craft & shop · Tab scores · Esc free mouse", 13)
 	help.horizontal_alignment = HORIZONTAL_ALIGNMENT_CENTER
 	bottom.add_child(help)
 
@@ -327,6 +334,11 @@ func _process(_delta: float) -> void:
 			_center.text = "You carry the %s crown! Bring it to your pedestal." % GameData.team_name(me.carrying_crown)
 		else:
 			_center.text = ""
+		if me.build_mode != _hotbar_build_mode:
+			_rebuild_hotbar()
+		_mode_label.text = "BUILD MODE: left click to place · Q to leave" if me.build_mode else ""
+		if me.on_ladder:
+			_mode_label.text = "On a ladder: W to climb, S to climb down"
 		for i in _hotbar.get_child_count():
 			_hotbar.get_child(i).modulate = Color.WHITE if i == me.hotbar_index else Color(1, 1, 1, 0.55)
 
@@ -386,11 +398,13 @@ func _on_private_updated() -> void:
 func _rebuild_hotbar() -> void:
 	for c in _hotbar.get_children():
 		c.queue_free()
-	var bar := _game_mode.hotbar_items()
+	var me := _world.local_player()
+	_hotbar_build_mode = me != null and me.build_mode
+	var bar := _game_mode.hotbar_items(_hotbar_build_mode)
 	for i in bar.size():
 		var id := bar[i]
 		var panel := PanelContainer.new()
-		panel.custom_minimum_size = Vector2(92, 52)
+		panel.custom_minimum_size = Vector2(78, 52) if _hotbar_build_mode else Vector2(92, 52)
 		var style := StyleBoxFlat.new()
 		style.bg_color = Color(0.08, 0.08, 0.1, 0.75)
 		style.border_color = GameData.item(id).get("color", Color(0.8, 0.8, 0.8))
@@ -398,14 +412,27 @@ func _rebuild_hotbar() -> void:
 		style.set_corner_radius_all(4)
 		panel.add_theme_stylebox_override("panel", style)
 		var count := int(_game_mode.my_inventory.get(id, 0))
-		var text := "%d\n%s" % [i + 1, GameData.display_name(id)]
-		if count > 1:
+		var key := str((i + 1) % 10) if i < 10 else ""
+		var text := "%s\n%s" % [key, GameData.display_name(id)]
+		if _hotbar_build_mode:
+			var recipe: Dictionary = GameData.item(id)["recipe"]
+			text += "\n" + _short_cost(recipe)
+			if not _can_afford(recipe):
+				style.bg_color = Color(0.3, 0.05, 0.05, 0.75)
+		elif count > 1:
 			text += " x%d" % count
-		var l := _label(text, 12)
+		var l := _label(text, 11 if _hotbar_build_mode else 12)
 		l.horizontal_alignment = HORIZONTAL_ALIGNMENT_CENTER
 		l.autowrap_mode = TextServer.AUTOWRAP_WORD_SMART
 		panel.add_child(l)
 		_hotbar.add_child(panel)
+
+
+func _short_cost(recipe: Dictionary) -> String:
+	var parts: PackedStringArray = []
+	for res: String in recipe:
+		parts.append("%d %s" % [recipe[res], GameData.display_name(res).split(" ")[0].to_lower()])
+	return " ".join(parts)
 
 
 func _rebuild_menu() -> void:
@@ -418,16 +445,22 @@ func _rebuild_menu() -> void:
 		var kind: String = def["kind"]
 		if kind != last_kind:
 			last_kind = kind
-			_menu_list.add_child(_label(kind.capitalize() + "s", 20))
+			var heading := "Building (press Q to build)" if kind == "structure" else kind.capitalize() + "s"
+			_menu_list.add_child(_label(heading, 20))
 		var row := HBoxContainer.new()
 		_menu_list.add_child(row)
 		var makes := (" (makes %d)" % def["yield"]) if def.has("yield") else ""
-		var info := _label("%s  (have %d)\n%s\nCost: %s%s" % [def["name"], int(_game_mode.my_inventory.get(id, 0)), def.get("desc", ""), GameData.cost_text(def["recipe"]), makes], 14)
+		var have := ("  (have %d)" % int(_game_mode.my_inventory.get(id, 0))) if kind != "structure" else ""
+		var info := _label("%s%s\n%s\nCost: %s%s" % [def["name"], have, def.get("desc", ""), GameData.cost_text(def["recipe"]), makes], 14)
 		info.size_flags_horizontal = Control.SIZE_EXPAND_FILL
 		row.add_child(info)
 		var button := Button.new()
 		button.custom_minimum_size = Vector2(150, 0)
-		if _game_mode.is_unlocked_locally(id):
+		if kind == "structure" and _game_mode.is_unlocked_locally(id):
+			button.text = "Build mode (Q)"
+			button.disabled = true
+			button.tooltip_text = "Building pieces are placed from build mode and cost resources when placed."
+		elif _game_mode.is_unlocked_locally(id):
 			button.text = "Craft"
 			button.disabled = not _can_afford(def["recipe"])
 			button.pressed.connect(func() -> void:

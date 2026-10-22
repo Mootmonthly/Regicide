@@ -10,6 +10,7 @@ const KEYS := {
 	"sprint": [KEY_SHIFT],
 	"toggle_menu": [KEY_C, KEY_B],
 	"scoreboard": [KEY_TAB],
+	"build_mode": [KEY_Q],
 	"release_mouse": [KEY_ESCAPE],
 }
 
@@ -21,11 +22,11 @@ func _ready() -> void:
 			var ev := InputEventKey.new()
 			ev.physical_keycode = key
 			InputMap.action_add_event(action, ev)
-	for i in 9:
+	for i in 10:
 		var action := "hotbar_%d" % (i + 1)
 		_ensure(action)
 		var ev := InputEventKey.new()
-		ev.physical_keycode = KEY_1 + i
+		ev.physical_keycode = KEY_1 + i if i < 9 else KEY_0
 		InputMap.action_add_event(action, ev)
 	_mouse("primary", MOUSE_BUTTON_LEFT)
 	_mouse("next_slot", MOUSE_BUTTON_WHEEL_DOWN)

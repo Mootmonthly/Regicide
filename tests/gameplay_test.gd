@@ -40,9 +40,22 @@ func _ready_to_act(peer: int) -> void:
 	gm.records[peer].next_action_time = 0.0
 
 
+func _make_walker(team: int, pos: Vector3) -> Player:
+	gm._add_bot(team)
+	var id := gm._next_bot_id + 1
+	var w := world.get_player(id)
+	w.get_node("Brain").free()
+	gm.records[id].protected_until = 0.0
+	w.teleport(pos)
+	return w
+
+
 ## Put a player at pos facing toward look_at (flat).
 func _place(p: Player, pos: Vector3, look_at_pos: Vector3) -> Vector3:
 	p.teleport(pos)
+	if gm.records.has(p.peer_id):
+		gm.records[p.peer_id].last_valid_pos = pos
+		gm.records[p.peer_id].last_move_check = gm.clock
 	var dir := (look_at_pos - pos)
 	dir.y = 0
 	dir = dir.normalized()
@@ -88,8 +101,10 @@ func _run() -> void:
 	gm.request_craft("iron_sword")
 	check(rec.inventory.count("iron_sword") == 1, "crafted iron sword")
 	check(rec.inventory.count("iron") == 12, "sword cost 8 iron")
-	gm.request_craft("ballista")
-	check(rec.inventory.count("ballista") == 0, "locked blueprint can't be crafted")
+	gm.request_craft("crossbow")
+	check(rec.inventory.count("crossbow") == 0, "locked blueprint can't be crafted")
+	gm.request_craft("wood_wall")
+	check(rec.inventory.count("wood_wall") == 0, "building pieces aren't crafted")
 	check(gm.hotbar_items().has("iron_sword"), "sword shows in hotbar")
 
 	# --- Combat & gold ---
@@ -111,35 +126,14 @@ func _run() -> void:
 	check(gm.records[ENEMY].deaths == 1, "dead enemies can't be killed again")
 
 	# --- Unlocks ---
-	gm.request_unlock("ballista")
-	check(not rec.unlocks.has("ballista"), "can't unlock without gold")
+	gm.request_unlock("crossbow")
+	check(not rec.unlocks.has("crossbow"), "can't unlock without gold")
 	rec.gold = 500
-	gm.request_unlock("ballista")
-	check(rec.unlocks.has("ballista") and rec.gold == 200, "unlock spends gold")
+	gm.request_unlock("crossbow")
+	check(rec.unlocks.has("crossbow") and rec.gold == 325, "unlock spends gold")
 	rec.inventory.add("iron", 10)
-	gm.request_craft("ballista")
-	check(rec.inventory.count("ballista") == 1, "unlocked blueprint can be crafted")
-
-	# --- Building ---
-	rec.inventory.add("wooden_wall", 2)
-	dir = _place(me, Vector3(30, 0, 60), Vector3(30, 0, 50))
-	await _frames(2)
-	_ready_to_act(1)
-	gm.request_primary("wooden_wall", dir, Vector3(30, 0, 56))
-	check(world.get_structures().size() == 1, "wall placed")
-	_ready_to_act(1)
-	gm.request_primary("wooden_wall", dir, Vector3(30, 0, 56))
-	check(world.get_structures().size() == 1, "can't stack walls in one spot")
-	check(rec.inventory.count("wooden_wall") == 1, "blocked placement keeps the item")
-	dir = _place(me, GameData.crown_pos(0) + Vector3(0, -1, 5), GameData.crown_pos(0))
-	await _frames(2)
-	_ready_to_act(1)
-	gm.request_primary("wooden_wall", dir, GameData.crown_pos(0))
-	check(world.get_structures().size() == 1, "can't build on the crown")
-	var wall := world.get_structures()[0]
-	gm.damage_structure(wall, 1000.0)
-	await _frames(1)
-	check(world.get_structures().is_empty(), "destroyed wall is removed")
+	gm.request_craft("crossbow")
+	check(rec.inventory.count("crossbow") == 1, "unlocked blueprint can be crafted")
 
 	# --- Consumables ---
 	rec.inventory.add("health_potion", 1)
@@ -212,24 +206,93 @@ func _run() -> void:
 	gm.request_craft("arrow")
 	check(rec.inventory.count("arrow") == 6, "arrow recipe yields 5")
 
-	# --- Gates & traps ---
-	rec.inventory.add("wooden_gate", 1)
-	rec.inventory.add("spike_trap", 1)
+	# --- Building: a small tower you can walk up ---
+	var S := BuildGrid
+	var walker := _make_walker(0, Vector3(52, 0, 0))
+	var wrec: PlayerRecord = gm.records[walker.peer_id]
+	rec.inventory.add("wood", 200)
+	rec.inventory.add("stone", 100)
+	_place(me, Vector3(46, 0, 7), Vector3(40, 0, 0))
+	await _frames(2)
+	check(not gm.perform_build(1, "wood_floor", S.make_slot(10, 0, 1)), "can't build a floating floor")
+	check(not gm.perform_build(1, "wood_wall", S.make_slot(10, 0, 1, 0)), "can't build a floating wall")
+	var wood_before := rec.inventory.count("wood")
+	var tower_walls := [S.make_slot(10, 0, 0, 0), S.make_slot(10, -1, 0, 0), S.make_slot(9, 0, 0, 1)]
+	for slot: Dictionary in tower_walls:
+		_ready_to_act(1)
+		check(gm.perform_build(1, "wood_wall", slot), "wall placed at %s" % slot)
+	_ready_to_act(1)
+	check(not gm.perform_build(1, "stone_wall", tower_walls[0]), "a slot can't hold two walls")
+	_ready_to_act(1)
+	check(gm.perform_build(1, "wood_floor", S.make_slot(10, 0, 1)), "floor rests on the walls")
+	_ready_to_act(1)
+	check(gm.perform_build(1, "wood_stairs", S.make_slot(11, 0, 0, 0, 1)), "stairs placed")
+	check(rec.inventory.count("wood") == wood_before - 3 * 8 - 6 - 8, "pieces are paid from resources")
+	_ready_to_act(1)
+	check(not gm.perform_build(1, "wood_floor", S.make_slot(-20, 0, 0)), "can't build out of reach")
+	check(world.placement_problem("wood_wall", S.make_slot(0, 37, 0, 0)) != "", "can't build on a crown")
+	var crowd := S.make_slot(roundi(walker.position.x / 4.0), roundi(walker.position.z / 4.0), 0)
+	check(world.placement_problem("wood_floor", crowd) == "Someone is in the way.", "can't build on top of someone")
+	# Walk up the stairs (they rise toward -X) and onto the floor.
+	walker.teleport(Vector3(48, 0, 0))
+	walker.rotation.y = PI / 2.0
+	walker.move_input = Vector2(0, -1)
+	await _frames(85)
+	walker.move_input = Vector2.ZERO
+	await _frames(10)
+	check(walker.position.y > 2.7 and walker.position.x > 38.0 and walker.position.x < 42.0, "walked up the stairs onto the floor (%s)" % walker.position)
+	# Knock out the walls: the floor comes down with them.
+	gm.damage_structure(world.pieces[S.key("wall", tower_walls[0])], 9999.0)
+	gm.damage_structure(world.pieces[S.key("wall", tower_walls[1])], 9999.0)
+	await _frames(3)
+	check(world.pieces.has(S.floor_key(10, 0, 1)), "the floor stands while one wall holds it")
+	gm.damage_structure(world.pieces[S.key("wall", tower_walls[2])], 9999.0)
+	await _frames(3)
+	check(not world.pieces.has(S.floor_key(10, 0, 1)), "the floor collapses when its last wall falls")
+	check(world.pieces.has(S.key("stairs", S.make_slot(11, 0, 0))), "ground-level pieces stay up")
+	await _frames(60)
+	check(walker.position.y < 0.5, "whoever stood on it falls")
+
+	# --- Ladders: over an enemy wall ---
+	world.structure_spawner.spawn({"uid": 9000, "item": "stone_wall", "team": 1, "owner": ENEMY, "slot": S.make_slot(15, 5, 0, 0)})
+	walker.teleport(Vector3(60, 0, 25))
+	walker.rotation.y = 0.0  # facing -Z, toward the wall at z=22
+	walker.move_input = Vector2(0, -1)
+	await _frames(40)
+	check(walker.position.z > 22.3, "the enemy wall blocks the way (%s)" % walker.position)
+	wrec.inventory.add("wood", 4)
+	wrec.next_action_time = 0.0
+	check(gm.perform_build(walker.peer_id, "ladder", S.make_slot(15, 5, 0, 0, 0, 1)), "ladder placed against the enemy wall")
+	check(world.ladders.size() == 1, "ladder registered")
+	var max_y := 0.0
+	for i in 150:
+		await get_tree().physics_frame
+		max_y = maxf(max_y, walker.position.y)
+	walker.move_input = Vector2.ZERO
+	check(max_y > 2.9, "climbed the ladder (max height %.2f)" % max_y)
+	check(walker.position.z < 21.5, "and dropped over the wall (%s)" % walker.position)
+	gm._remove_player(walker.peer_id)
+
+	# --- Doors, arrow slits, traps ---
+	world.structure_spawner.spawn({"uid": 9001, "item": "wood_door", "team": 0, "owner": 1, "slot": S.make_slot(15, 10, 0, 0)})
+	world.structure_spawner.spawn({"uid": 9002, "item": "arrow_slit", "team": 0, "owner": 1, "slot": S.make_slot(15, 12, 0, 0)})
+	await _frames(1)
+	var door: Structure = world.pieces[S.edge_key(0, 15, 10, 0)]
+	check(door.collision_layer == GameData.gate_layer(0), "door is on its team's gate layer")
+	check(me.collision_mask & door.collision_layer == 0, "own team walks through doors")
+	check(enemy.collision_mask & door.collision_layer != 0, "enemies are blocked by doors")
+	var slit: Structure = world.pieces[S.edge_key(0, 15, 12, 0)]
+	check(not slit.blocks_point(slit.global_position + Vector3(0, 1.55, 0)), "arrows fit through the slit")
+	check(slit.blocks_point(slit.global_position + Vector3(0, 0.6, 0)), "the rest of the slit wall is solid")
+	check(slit.blocks_point(slit.global_position + Vector3(1.4, 1.55, 0)), "beside the slit is solid")
 	rec.unlocks["spike_trap"] = true
-	dir = _place(me, Vector3(60, 0, 10), Vector3(60, 0, 0))
+	rec.inventory.add("iron", 5)
+	_place(me, Vector3(60, 0, 6), Vector3(64, 0, 8))
 	await _frames(2)
 	_ready_to_act(1)
-	check(gm.perform_primary(1, "wooden_gate", dir, Vector3(60, 0, 5)), "gate placed")
-	var gate: Structure = null
-	for s in world.get_structures():
-		if s.is_gate():
-			gate = s
-	check(gate != null and gate.collision_layer == GameData.gate_layer(0), "gate is on its team's gate layer")
-	check(me.collision_mask & gate.collision_layer == 0, "own team passes through the gate")
-	check(enemy.collision_mask & gate.collision_layer != 0, "enemies are blocked by the gate")
-	_ready_to_act(1)
-	check(gm.perform_primary(1, "spike_trap", dir, Vector3(66, 0, 5)), "trap placed")
-	enemy.teleport(Vector3(66, 0, 5))
+	check(gm.perform_build(1, "spike_trap", S.make_slot(16, 2, 0)), "trap placed")
+	enemy.teleport(Vector3(64, 0, 8))
+	var trap: Structure = world.pieces[S.key("free", S.make_slot(16, 2, 0))]
 	var before := enemy.health
 	for i in 60:
 		await get_tree().physics_frame
@@ -257,7 +320,10 @@ func _run() -> void:
 			bots += 1
 	check(bots == 4, "bots fill each team to 3 (got %d)" % bots)
 	check(world.get_players().size() == 6, "bot players spawned")
-	var bot := world.get_player(-1)
+	var bot: Player = null
+	for p in world.get_players():
+		if p.is_bot:
+			bot = p
 	check(bot != null and bot.has_node("Brain"), "bots have brains")
 	var start := bot.global_position
 	for i in 120:

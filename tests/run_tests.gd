@@ -1,19 +1,20 @@
-extends SceneTree
-## Headless unit tests for the pure game-rule classes.
-## Run: godot --headless --path . -s res://tests/run_tests.gd
+extends Node
+## Headless unit tests for the game-rule classes.
+## Run: godot --headless --path . res://tests/run_tests.tscn
 
 var _checks := 0
 var _failures := 0
 
 
-func _initialize() -> void:
+func _ready() -> void:
 	_test_inventory()
 	_test_game_data()
 	_test_crown_rules()
 	_test_map_generator()
 	_test_build_zones()
+	_test_build_grid()
 	print("%d checks, %d failures" % [_checks, _failures])
-	quit(1 if _failures > 0 else 0)
+	get_tree().quit(1 if _failures > 0 else 0)
 
 
 func check(cond: bool, what: String) -> void:
@@ -57,7 +58,9 @@ func _test_game_data() -> void:
 					check(def.has(key), "%s has %s" % [id, key])
 				check(GameData.is_item(def.get("ammo", "")), "%s ammo exists" % id)
 			"structure":
-				check(def.get("size") is Vector3 and float(def.get("health", 0)) > 0, "%s has size and health" % id)
+				check(def.get("piece", "") in ["wall", "door", "floor", "stairs", "roof", "ladder", "free"], "%s has a piece type" % id)
+				check(float(def.get("health", 0)) > 0, "%s has health" % id)
+				check(not Structure.piece_boxes(id, 0).is_empty(), "%s has a shape" % id)
 			"consumable":
 				check(def.has("effect"), "%s has an effect" % id)
 	check(GameData.item("").get("kind") == "fists", "empty id means fists")
@@ -66,6 +69,10 @@ func _test_game_data() -> void:
 	var rec := PlayerRecord.new(5, "Test", 0)
 	check(rec.is_unlocked("stone_axe"), "free items start unlocked")
 	check(not rec.is_unlocked("ballista"), "paid items start locked")
+	check(GameMode.hotbar_for({"iron_sword": 1, "wood": 50}, [], false) == ["", "iron_sword"], "normal hotbar: fists + owned gear")
+	var build_bar := GameMode.hotbar_for({}, [], true)
+	check(build_bar.has("wood_wall") and build_bar.has("ladder") and not build_bar.has("ballista"), "build hotbar: unlocked pieces")
+	check(GameMode.hotbar_for({}, ["ballista"], true).has("ballista"), "unlocked blueprints join the build hotbar")
 
 
 func _test_crown_rules() -> void:
@@ -119,3 +126,59 @@ func _test_build_zones() -> void:
 	check(not GameData.can_build_at(GameData.crown_pos(0)), "can't build on a pedestal")
 	check(GameData.can_build_at(GameData.crown_pos(0) + Vector3(0, 0, -12)), "can build near the base")
 	check(not GameData.can_build_at(Vector3(GameData.MAP_WIDTH, 0, 0)), "can't build outside the map")
+
+
+func _test_build_grid() -> void:
+	var G := BuildGrid
+	# Snapping: a wall faces you, on the grid line nearest your crosshair.
+	var wall := G.slot_for("wood_wall", Vector3(1.0, 0.05, 5.7), Vector3(0, -0.2, -1), Vector3(0, 0, 12))
+	check(wall["axis"] == 0 and wall["j"] == 1 and wall["level"] == 0, "wall snaps across your view (%s)" % wall)
+	var xf := G.transform_for("wall", wall)
+	check(xf.origin.is_equal_approx(Vector3(0, 0, 6)), "wall sits on grid line z=6 (%s)" % xf.origin)
+	var side_wall := G.slot_for("wood_wall", Vector3(7.0, 3.05, 1.0), Vector3(1, 0, 0.1), Vector3(0, 3, 0))
+	check(side_wall["axis"] == 1 and side_wall["i"] == 1 and side_wall["level"] == 1, "wall on a floor goes up a level (%s)" % side_wall)
+	var fl := G.slot_for("wood_floor", Vector3(4.2, 2.6, -7.9), Vector3(0, 0, -1), Vector3.ZERO)
+	check(fl["i"] == 1 and fl["j"] == -2 and fl["level"] == 1, "floor snaps to the nearest level (%s)" % fl)
+	var st := G.slot_for("wood_stairs", Vector3(0, 0.05, -4), Vector3(0, 0, -1), Vector3.ZERO)
+	check(st["rot"] == 0 and st["level"] == 0, "stairs rise away from you")
+	var lad := G.slot_for("ladder", Vector3(0.5, 1.0, 6.05), Vector3(0, 0, -1), Vector3(0, 0, 9))
+	check(lad["axis"] == 0 and lad["j"] == 1 and lad["side"] == 1, "ladder leans on your side of the wall (%s)" % lad)
+	check(G.transform_for("ladder", lad).origin.z > 6.0, "ladder is offset toward the climber")
+	check(G.sanitize({"i": 2.7, "axis": 9, "side": -5, "rot": 7}) == G.make_slot(2, 0, 0, 1, 3, -1), "slots are sanitized")
+
+	# Keys: walls and doors share an edge; stairs/roofs/free share a cell's space.
+	check(G.key("wall", wall) == G.key("door", wall), "a door replaces a wall slot")
+	check(G.key("stairs", G.make_slot(0, 0, 0)) == G.key("free", G.make_slot(0, 0, 0)), "stairs and ballistas share space")
+	check(G.key("floor", G.make_slot(0, 0, 0)) != G.key("stairs", G.make_slot(0, 0, 0)), "stairs can sit on a floor")
+
+	# Support rules.
+	var placed := {}
+	var has := func(k: String) -> bool: return placed.has(k)
+	check(G.is_supported("wall", G.make_slot(0, 0, 0), has), "ground-level pieces stand on the ground")
+	check(not G.is_supported("floor", G.make_slot(0, 0, 1), has), "a floor can't float")
+	check(not G.is_supported("wall", G.make_slot(0, 0, 1), has), "a wall can't float")
+	placed[G.edge_key(0, 0, 0, 0)] = true
+	check(G.is_supported("floor", G.make_slot(0, 0, 1), has), "a floor rests on a wall below")
+	check(G.is_supported("floor", G.make_slot(0, 1, 1), has), "...on either side of it")
+	check(G.is_supported("wall", G.make_slot(0, 0, 1, 0), has), "walls stack")
+	placed[G.floor_key(0, 0, 1)] = true
+	check(G.is_supported("floor", G.make_slot(1, 0, 1), has), "floors reach one cell out")
+	check(not G.is_supported("floor", G.make_slot(2, 0, 1), has), "but not two")
+	check(G.is_supported("wall", G.make_slot(0, 0, 1, 1), has), "walls stand on floors")
+	check(G.is_supported("stairs", G.make_slot(0, 0, 1), has), "stairs stand on floors")
+	check(not G.is_supported("free", G.make_slot(3, 3, 1), has), "a ballista needs a floor")
+	placed[G.edge_key(0, 0, 0, 1)] = true
+	check(G.is_supported("ladder", G.make_slot(0, 0, 1, 0, 0, 1), has), "ladders lean on a wall")
+	check(not G.is_supported("ladder", G.make_slot(5, 5, 1, 0, 0, 1), has), "a ladder can't lean on nothing")
+
+	# Collapse: knocking out the only wall drops everything resting on it.
+	var tower := {
+		G.edge_key(0, 0, 0, 0): ["wall", G.make_slot(0, 0, 0, 0)],
+		G.floor_key(0, 0, 1): ["floor", G.make_slot(0, 0, 1)],
+		G.floor_key(1, 0, 1): ["floor", G.make_slot(1, 0, 1)],
+		G.edge_key(1, 0, 0, 1): ["wall", G.make_slot(0, 0, 1, 1)],
+		G.key("free", G.make_slot(0, 0, 1)): ["free", G.make_slot(0, 0, 1)],
+	}
+	check(G.supported_keys(tower).size() == 5, "a supported tower stands")
+	tower.erase(G.edge_key(0, 0, 0, 0))
+	check(G.supported_keys(tower).is_empty(), "remove its base and it all comes down")

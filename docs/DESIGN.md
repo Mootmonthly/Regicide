@@ -47,8 +47,7 @@ Nodes shrink as they're harvested, vanish when empty, and regrow after 60–120 
 
 ## Items
 
-**Free to craft:** Stone Axe, Pickaxe, Wooden Club, Iron Sword, Shortbow, Arrows (×5),
-Wooden Wall, Stone Wall, Wooden Gate (your team walks through it, enemies can't).
+**Free to craft:** Stone Axe, Pickaxe, Wooden Club, Iron Sword, Shortbow, Arrows (×5).
 
 Arrows fly in a real arc (the server simulates the flight), are blocked by enemy walls
 and trees, and are used up even on a miss.
@@ -88,17 +87,52 @@ Unlocks are per player and last until the match ends.
 | Capture | 250 to the carrier, 75 to every teammate |
 | Return own crown | 25 |
 
-## Bots
+## Building
 
-Empty slots are filled with server-side bots ("Team size" in the menu, `--bots N` on the
-command line). Humans joining replace bots. Bots use exactly the same server requests as
-players, so they obey every cooldown, cost and range rule. Per 10 bots:
+Press **Q** for build mode: the hotbar switches to building pieces, a see-through ghost
+snaps to the grid where you aim (green = OK, red = not), and left click places it.
+Pieces are paid for straight from your resources, with no crafting step.
+
+**Grid:** 4 × 4 m cells, 3 m levels, up to 6 levels high. Walls, doors and ladders sit on
+cell edges and always face you; floors, stairs, roofs and free-standing pieces fill cells.
+
+| Piece | Cost | Notes |
+| --- | --- | --- |
+| Wood Wall | 8 wood | 300 hp |
+| Stone Wall | 10 stone | 800 hp |
+| Arrow Slit Wall | 12 stone | Chest-high gap: shoot out, hard to shoot in |
+| Wood Door | 12 wood | Your team walks through; enemies can't |
+| Wood / Stone Floor | 6 wood / 8 stone | Foundations on the ground, floors up high |
+| Wood Stairs | 8 wood | Climb one level |
+| Wood Roof | 6 wood | Sloped; blocks arrows and fireballs from above |
+| Ladder | 4 wood | Lean on any wall — including the enemy's — and climb over |
+| Spike Trap | 6 wood, 3 iron | Blueprint (100g). Hurts enemies standing on it |
+| Ballista | 25 wood, 10 iron | Blueprint (300g). Auto-turret; put it on a tower |
+
+**Support:** everything must connect to the ground. Walls stand on the ground, a wall
+below, or a floor. Floors rest on walls beneath them, or reach one cell out from a floor
+that does. Stairs and ballistas need a floor or the ground. Ladders lean on a wall, stand
+on a ladder, or stand on a floor. Destroy a support and whatever it held collapses —
+siege the base of a tower to bring it down.
+
+**Limits:** no building within 6 m of a crown pedestal, nor on top of a player.
+Melee can only hit pieces at your height (you can't chop a second-storey wall from the
+ground — bring a ladder or stairs).
+
+## Test bots
+
+Bots are a **testing tool** — real matches are people. They're off by default; "Test
+bots" on the menu (or `--bots N`) fills empty slots for solo testing and for the
+automated match soak test.
+
+Humans joining replace bots. Bots use exactly the same server requests as players, so
+they obey every cooldown, cost and range rule. Per 10 bots:
 
 | Role | Count | Behavior |
 | --- | --- | --- |
 | Gatherer | 4 | Builds the economy (tools, sword, bow, skillbooks), joins the attack later |
-| Attacker | 4 | Arms up, rallies, then charges in waves around a flank; escorts carriers |
-| Defender | 2 | Builds a wall ring (with gaps), ballistas and traps around the crown; guards it |
+| Attacker | 4 | Arms up, rallies, charges in waves around a flank, ladders over walls |
+| Defender | 2 | Builds a grid wall ring (with gaps), ballistas and traps around the crown |
 
 Everyone chases a thief who gets close; attackers hunt thieves anywhere (this breaks
 "both crowns stolen" standoffs). A 50v50 bot match typically ends 3–1 in 8–10 minutes.
@@ -128,7 +162,8 @@ than a horse can. Players get 3 s of spawn protection.
 **Next up**
 - Playtest with real people and tune: gather speed, prices, crown carry speed, bot skill.
 - Bot difficulty setting; smarter bot pathing around walls.
-- Ramps / watchtowers (height advantage for archers), repairing structures.
+- Repairing pieces, upgrading wood to stone in place, rotating pieces manually.
+- More pieces: half walls, windows, battlements, drawbridge, siege ram, catapult.
 - Blocking, sprint stamina, a few more spells (heal aura, frost bolt).
 - Death drops some resources; respawn wave timer.
 

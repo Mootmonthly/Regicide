@@ -19,6 +19,7 @@ signal hit_confirmed(killed: bool)
 
 const SCOREBOARD_INTERVAL := 1.0
 const MOVE_CHECK_INTERVAL := 0.5
+const BUILD_COOLDOWN := 0.2
 
 var world: World
 ## Game time in seconds, advanced on every peer. Used for cooldowns and timers.
@@ -49,6 +50,7 @@ var _next_bot_id := -1
 var _bot_name_index := 0
 var _scoreboard_dirty := true
 var _scoreboard_timer := 0.0
+var _collapse_pending := false
 
 
 func _ready() -> void:
@@ -351,18 +353,23 @@ func _apply_crowns(data: Array) -> void:
 	crowns_updated.emit()
 
 
-## Hotbar contents for the local player: fists, then every owned usable item.
-func hotbar_items() -> Array[String]:
-	return hotbar_for(my_inventory)
+## Hotbar contents for the local player. Normal mode: fists, then owned items.
+## Build mode: every building piece you've unlocked (paid for when placed).
+func hotbar_items(build_mode := false) -> Array[String]:
+	return hotbar_for(my_inventory, my_unlocks, build_mode)
 
 
-static func hotbar_for(inventory: Dictionary) -> Array[String]:
-	var out: Array[String] = [""]
+static func hotbar_for(inventory: Dictionary, unlocks: Array, build_mode := false) -> Array[String]:
+	var out: Array[String] = []
+	if not build_mode:
+		out.append("")
 	for id: String in GameData.ITEMS:
-		if GameData.ITEMS[id]["kind"] != "ammo" and int(inventory.get(id, 0)) > 0:
+		var def: Dictionary = GameData.ITEMS[id]
+		if build_mode:
+			if def["kind"] == "structure" and (int(def["unlock_cost"]) <= 0 or unlocks.has(id)):
+				out.append(id)
+		elif def["kind"] != "ammo" and def["kind"] != "structure" and int(inventory.get(id, 0)) > 0:
 			out.append(id)
-			if out.size() >= 9:
-				break
 	return out
 
 
@@ -393,11 +400,53 @@ func request_primary(item_id: String, aim_dir: Vector3, target: Vector3) -> void
 		perform_primary(_sender(), item_id, aim_dir, target)
 
 
+## Place a building piece in a grid slot, paying its recipe from resources.
+@rpc("any_peer", "call_local", "reliable")
+func request_build(item_id: String, slot: Dictionary) -> void:
+	if server_running:
+		perform_build(_sender(), item_id, slot)
+
+
+func perform_build(peer: int, item_id: String, slot: Dictionary) -> bool:
+	if match_over:
+		return false
+	var rec: PlayerRecord = records.get(peer)
+	var p := world.get_player(peer)
+	if rec == null or p == null or not p.alive or clock < rec.next_action_time:
+		return false
+	var def := GameData.item(item_id)
+	if def.get("kind", "") != "structure":
+		return false
+	if not rec.is_unlocked(item_id):
+		_tell(peer, "Buy the %s blueprint first." % def["name"])
+		return false
+	slot = BuildGrid.sanitize(slot)
+	var kind := BuildGrid.kind_of(item_id)
+	if p.chest().distance_to(BuildGrid.center_of(kind, slot)) > BuildGrid.REACH + 1.0:
+		return false
+	var problem := world.placement_problem(item_id, slot)
+	if problem != "":
+		_tell(peer, problem)
+		return false
+	if not rec.inventory.pay(def["recipe"]):
+		_tell(peer, "Not enough resources: %s needs %s." % [def["name"], GameData.cost_text(def["recipe"])])
+		return false
+	rec.next_action_time = clock + BUILD_COOLDOWN
+	world.structure_spawner.spawn({
+		"uid": _next_structure_uid, "item": item_id, "team": rec.team, "owner": peer, "slot": slot,
+	})
+	_next_structure_uid += 1
+	_push_private(peer)
+	return true
+
+
 func perform_craft(peer: int, item_id: String) -> bool:
 	var rec: PlayerRecord = records.get(peer)
 	if rec == null or not GameData.is_item(item_id):
 		return false
 	var def := GameData.item(item_id)
+	if def["kind"] == "structure":
+		return false  # placed directly in build mode, never crafted
 	if not rec.is_unlocked(item_id):
 		_tell(peer, "Buy the %s blueprint first." % def["name"])
 		return false
@@ -449,8 +498,6 @@ func perform_primary(peer: int, item_id: String, aim_dir: Vector3, target: Vecto
 		_melee(rec, p, def, aim_dir)
 	elif kind == "ranged":
 		return _shoot(rec, p, def, aim_dir)
-	elif kind == "structure":
-		return _place_structure(rec, p, item_id, def, target, aim_dir)
 	elif kind == "consumable":
 		return _use_consumable(rec, p, item_id, def, aim_dir)
 	return true
@@ -476,10 +523,14 @@ func _melee(rec: PlayerRecord, attacker: Player, def: Dictionary, aim_dir: Vecto
 		if d <= reach and d < best_d and _in_cone(origin, p.sync_pos, forward):
 			best = p
 			best_d = d
+	var eye_y := origin.y + 1.2
 	for s in world.get_structures():
 		if s.team == rec.team:
 			continue
-		var cp := s.closest_point(origin)
+		var yr := s.y_range()
+		if eye_y < yr.x - 1.6 or eye_y > yr.y + 1.6:
+			continue  # out of reach above or below
+		var cp := s.closest_point(origin + Vector3(0, 1.2, 0))
 		var d := GameData.flat_distance(origin, cp)
 		if d <= reach and d < best_d and _in_cone(origin, cp, forward):
 			best = s
@@ -544,7 +595,7 @@ func _shoot(rec: PlayerRecord, shooter: Player, def: Dictionary, aim_dir: Vector
 			players.append(p)
 	var structures: Array[Structure] = []
 	for s in world.get_structures():
-		if s.team != rec.team and not s.is_trap() and _near_segment(s.global_position, start, corridor_end, 5.0):
+		if not s.is_trap() and not s.is_ladder() and _near_segment(s.global_position, start, corridor_end, 6.0):
 			structures.append(s)
 	var nodes: Array[ResourceNode] = []
 	for r in world.resource_nodes:
@@ -573,7 +624,7 @@ func _shoot(rec: PlayerRecord, shooter: Player, def: Dictionary, aim_dir: Vector
 		if done:
 			break
 		for s in structures:
-			if pos.y < s.size.y and s.distance_to_point(pos) < 0.15:
+			if s.blocks_point(pos):
 				hit_structure = s
 				done = true
 				break
@@ -588,7 +639,7 @@ func _shoot(rec: PlayerRecord, shooter: Player, def: Dictionary, aim_dir: Vector
 	world.fx_arrow.rpc(start, aim_dir * float(def["speed"]), t)
 	if hit_player:
 		damage_player(hit_player.peer_id, def["damage"], rec.peer_id)
-	elif hit_structure:
+	elif hit_structure and hit_structure.team != rec.team:
 		damage_structure(hit_structure, def.get("structure_damage", 1.0))
 	return true
 
@@ -622,6 +673,7 @@ func damage_structure(s: Structure, amount: float) -> void:
 	s.health -= amount
 	if s.health <= 0.0:
 		s.queue_free()  # the spawner removes it on every client
+		_collapse_pending = true
 	else:
 		world.structure_health.rpc(s.name, s.health / s.max_health)
 
@@ -655,7 +707,7 @@ func _kill(victim: Player, killer_peer: int, cause: String) -> void:
 func _respawn(peer: int) -> void:
 	var rec: PlayerRecord = records.get(peer)
 	var p := world.get_player(peer)
-	if rec == null or p == null:
+	if rec == null or p == null or p.alive:
 		return
 	p.max_health = GameData.PLAYER_MAX_HEALTH + rec.bonus_health
 	p.health = p.max_health
@@ -680,43 +732,21 @@ func nearest_enemy(pos: Vector3, team: int, max_range: float) -> Player:
 
 
 func fire_turret(s: Structure, target: Player, turret: Dictionary) -> void:
-	var from := s.global_position + Vector3(0, s.size.y + 0.3, 0)
+	var from := s.top() + Vector3(0, 0.3, 0)
 	world.fx_bolt.rpc(from, target.sync_pos + Vector3(0, 1.0, 0))
 	damage_player(target.peer_id, turret["damage"], s.owner_peer, "ballista")
 
 
 func trigger_trap(s: Structure, trap: Dictionary) -> void:
 	for p in world.get_players():
-		if p.team != s.team and p.alive and p.sync_pos.y < 1.0 and s.distance_to_point(p.sync_pos) < 0.3:
+		var yr := s.y_range()
+		if p.team != s.team and p.alive and absf(p.sync_pos.y - yr.x) < 1.0 and s.distance_to_point(p.sync_pos) < 0.3:
 			damage_player(p.peer_id, trap["damage"], s.owner_peer, "spike trap")
 
 
 # =============================================================================
 # Building & consumables
 # =============================================================================
-
-func _place_structure(rec: PlayerRecord, p: Player, item_id: String, def: Dictionary, target: Vector3, aim_dir: Vector3) -> bool:
-	target.y = 0.0
-	if GameData.flat_distance(target, p.sync_pos) > 9.0:
-		return false
-	if not GameData.can_build_at(target):
-		_tell(rec.peer_id, "You can't build there.")
-		return false
-	for s in world.get_structures():
-		if s.distance_to_point(target) < 0.5:
-			_tell(rec.peer_id, "Something is already built there.")
-			return false
-	if not rec.inventory.remove(item_id, 1):
-		return false
-	var yaw := GameData.snap_yaw(atan2(-aim_dir.x, -aim_dir.z))
-	world.structure_spawner.spawn({
-		"uid": _next_structure_uid, "item": item_id, "team": rec.team,
-		"owner": rec.peer_id, "pos": target, "yaw": yaw,
-	})
-	_next_structure_uid += 1
-	_push_private(rec.peer_id)
-	return true
-
 
 func _use_consumable(rec: PlayerRecord, p: Player, item_id: String, def: Dictionary, aim_dir: Vector3) -> bool:
 	var used := true
@@ -772,7 +802,7 @@ func _cast_fireball(rec: PlayerRecord, caster: Player, def: Dictionary, aim_dir:
 		if p.team != rec.team and p.alive and (p.sync_pos + Vector3(0, 0.9, 0)).distance_to(impact) <= radius:
 			damage_player(p.peer_id, def["damage"], rec.peer_id, "fireball")
 	for s in world.get_structures():
-		if s.team != rec.team and s.distance_to_point(impact) <= radius:
+		if s.team != rec.team and s.closest_point(impact).distance_to(impact) <= radius:
 			damage_structure(s, def["structure_damage"])
 
 
@@ -781,7 +811,7 @@ func _fireball_blocked(point: Vector3, team: int) -> bool:
 		if p.team != team and p.alive and (p.sync_pos + Vector3(0, 0.9, 0)).distance_to(point) < 1.2:
 			return true
 	for s in world.get_structures():
-		if not s.is_trap() and point.y < s.size.y and s.distance_to_point(point) < 0.3:
+		if not s.is_trap() and not s.is_ladder() and s.blocks_point(point):
 			return true
 	return false
 
@@ -799,6 +829,9 @@ func _physics_process(delta: float) -> void:
 		_scoreboard_timer = SCOREBOARD_INTERVAL
 		_scoreboard_dirty = false
 		_broadcast(&"_scoreboard", [_scoreboard_rows()])
+	if _collapse_pending:
+		_collapse_pending = false
+		_collapse_unsupported()
 	if match_over:
 		return
 	_check_movement()
@@ -816,6 +849,19 @@ func _physics_process(delta: float) -> void:
 			_return_crown(crown, null)
 		else:
 			_check_crown_touch(crown)
+
+
+## After a piece is destroyed, anything no longer connected to the ground falls down.
+func _collapse_unsupported() -> void:
+	var standing := {}
+	for s in world.get_structures():
+		standing[s.slot_key] = [s.kind, s.slot]
+	var supported := BuildGrid.supported_keys(standing)
+	for s in world.get_structures():
+		if not supported.has(s.slot_key):
+			s.health = 0.0
+			s.queue_free()
+			_collapse_pending = true
 
 
 ## Movement is client-owned, so the server rejects anything faster than a horse.

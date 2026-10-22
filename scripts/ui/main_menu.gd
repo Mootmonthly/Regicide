@@ -51,15 +51,15 @@ func _ready() -> void:
 	var fill_row := HBoxContainer.new()
 	col.add_child(fill_row)
 	var fill_label := Label.new()
-	fill_label.text = "Team size"
+	fill_label.text = "Test bots"
 	fill_label.custom_minimum_size.x = 130
-	fill_label.tooltip_text = "When hosting: bots fill each team up to this many players."
+	fill_label.tooltip_text = "For testing: when hosting, bots fill each team up to this many players. Leave at 0 for real matches."
 	fill_row.add_child(fill_label)
 	_team_fill = SpinBox.new()
 	_team_fill.min_value = 0
 	_team_fill.max_value = GameData.TEAM_SIZE
 	_team_fill.value = Net.team_fill
-	_team_fill.suffix = "(bots fill)"
+	_team_fill.suffix = "per team"
 	_team_fill.size_flags_horizontal = Control.SIZE_EXPAND_FILL
 	fill_row.add_child(_team_fill)
 

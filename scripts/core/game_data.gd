@@ -11,7 +11,8 @@ const RESPAWN_TIME := 6.0
 const SPAWN_PROTECTION := 3.0
 const MATCH_RESTART_DELAY := 15.0
 ## Default number of players per team (bots fill the empty slots).
-const DEFAULT_TEAM_FILL := 20
+## Bots are a testing tool; real matches are all people, so none by default.
+const DEFAULT_TEAM_FILL := 0
 
 # --- Crown (capture-the-flag) --------------------------------------------
 const CROWN_TOUCH_RADIUS := 2.0
@@ -126,43 +127,75 @@ const ITEMS := {
 		"color": Color(0.7, 0.6, 0.45),
 		"desc": "5 arrows for bows and crossbows.",
 	},
-	# Structures
-	"wooden_wall": {
-		"name": "Wooden Wall", "kind": "structure", "unlock_cost": 0,
-		"recipe": {"wood": 10},
-		"health": 300.0, "size": Vector3(4.0, 3.0, 0.5),
+	# Building pieces. "piece" picks the grid slot type (see BuildGrid). Pieces are not
+	# crafted: in build mode (Q) the recipe is paid straight from your resources.
+	"wood_wall": {
+		"name": "Wood Wall", "kind": "structure", "piece": "wall", "unlock_cost": 0,
+		"recipe": {"wood": 8}, "health": 300.0, "thickness": 0.4,
 		"color": Color(0.55, 0.38, 0.2),
-		"desc": "Cheap palisade.",
+		"desc": "Cheap palisade wall.",
 	},
 	"stone_wall": {
-		"name": "Stone Wall", "kind": "structure", "unlock_cost": 0,
-		"recipe": {"stone": 12},
-		"health": 800.0, "size": Vector3(4.0, 3.5, 0.8),
+		"name": "Stone Wall", "kind": "structure", "piece": "wall", "unlock_cost": 0,
+		"recipe": {"stone": 10}, "health": 800.0, "thickness": 0.6,
 		"color": Color(0.6, 0.6, 0.62),
-		"desc": "Sturdy masonry.",
+		"desc": "Sturdy masonry wall.",
 	},
-	"wooden_gate": {
-		"name": "Wooden Gate", "kind": "structure", "unlock_cost": 0,
-		"recipe": {"wood": 14},
-		"health": 350.0, "size": Vector3(4.0, 3.0, 0.5), "gate": true,
+	"arrow_slit": {
+		"name": "Arrow Slit Wall", "kind": "structure", "piece": "wall", "unlock_cost": 0,
+		"recipe": {"stone": 12}, "health": 650.0, "thickness": 0.6, "slit": true,
+		"color": Color(0.55, 0.55, 0.58),
+		"desc": "Stone wall with a chest-high gap to shoot arrows through.",
+	},
+	"wood_door": {
+		"name": "Wood Door", "kind": "structure", "piece": "door", "unlock_cost": 0,
+		"recipe": {"wood": 12}, "health": 350.0, "thickness": 0.4,
 		"color": Color(0.62, 0.45, 0.25),
 		"desc": "A wall your own team can walk through.",
 	},
+	"wood_floor": {
+		"name": "Wood Floor", "kind": "structure", "piece": "floor", "unlock_cost": 0,
+		"recipe": {"wood": 6}, "health": 250.0,
+		"color": Color(0.6, 0.45, 0.28),
+		"desc": "Floor or foundation. Rests on walls below, or reaches one cell out from them.",
+	},
+	"stone_floor": {
+		"name": "Stone Floor", "kind": "structure", "piece": "floor", "unlock_cost": 0,
+		"recipe": {"stone": 8}, "health": 600.0,
+		"color": Color(0.5, 0.5, 0.52),
+		"desc": "Sturdy floor or foundation.",
+	},
+	"wood_stairs": {
+		"name": "Wood Stairs", "kind": "structure", "piece": "stairs", "unlock_cost": 0,
+		"recipe": {"wood": 8}, "health": 250.0,
+		"color": Color(0.58, 0.42, 0.24),
+		"desc": "Climbs one level (3 m). Build them on the ground or on a floor.",
+	},
+	"wood_roof": {
+		"name": "Wood Roof", "kind": "structure", "piece": "roof", "unlock_cost": 0,
+		"recipe": {"wood": 6}, "health": 250.0,
+		"color": Color(0.5, 0.22, 0.16),
+		"desc": "Sloped roof. Rests on walls. Shelters you from arrows and fireballs.",
+	},
+	"ladder": {
+		"name": "Ladder", "kind": "structure", "piece": "ladder", "unlock_cost": 0,
+		"recipe": {"wood": 4}, "health": 120.0,
+		"color": Color(0.65, 0.5, 0.3),
+		"desc": "Lean it on any wall, even the enemy's, and climb with W. Stack them to go higher.",
+	},
 	"spike_trap": {
-		"name": "Spike Trap", "kind": "structure", "unlock_cost": 100,
-		"recipe": {"wood": 6, "iron": 3},
-		"health": 120.0, "size": Vector3(2.0, 0.3, 2.0),
+		"name": "Spike Trap", "kind": "structure", "piece": "free", "unlock_cost": 100,
+		"recipe": {"wood": 6, "iron": 3}, "health": 120.0,
 		"trap": {"damage": 12.0, "interval": 0.75},
 		"color": Color(0.5, 0.5, 0.52),
 		"desc": "Hurts enemies standing on it. Doesn't block movement.",
 	},
 	"ballista": {
-		"name": "Ballista", "kind": "structure", "unlock_cost": 300,
-		"recipe": {"wood": 25, "iron": 10},
-		"health": 400.0, "size": Vector3(1.6, 1.6, 1.6),
+		"name": "Ballista", "kind": "structure", "piece": "free", "unlock_cost": 300,
+		"recipe": {"wood": 25, "iron": 10}, "health": 400.0,
 		"turret": {"range": 32.0, "damage": 22.0, "cooldown": 2.5},
 		"color": Color(0.45, 0.3, 0.15),
-		"desc": "Automatically fires bolts at nearby enemies.",
+		"desc": "Automatically fires bolts at nearby enemies. Put it on a tower.",
 	},
 	# Consumables
 	"health_potion": {
@@ -277,11 +310,6 @@ static func can_build_at(p: Vector3) -> bool:
 		if flat_distance(p, crown_pos(t)) < NO_BUILD_RADIUS:
 			return false
 	return true
-
-
-## Structures snap to 22.5 degree increments.
-static func snap_yaw(yaw: float) -> float:
-	return snappedf(yaw, PI / 8.0)
 
 
 static func cost_text(cost: Dictionary) -> String:

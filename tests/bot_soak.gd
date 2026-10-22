@@ -7,6 +7,7 @@ var world: World
 var gm: GameMode
 var stats := {"kills": 0, "steals": 0, "captures": 0, "returns": 0, "wins": 0}
 var max_structures := 0
+var built := {}  ## item id -> pieces ever placed
 var _physics_us := 0
 var _frames := 0
 
@@ -27,6 +28,9 @@ func _ready() -> void:
 	add_child(world)
 	gm = world.game_mode
 	gm.message_received.connect(_on_message)
+	world.structures_root.child_entered_tree.connect(func(n: Node) -> void:
+		if n is Structure:
+			built[n.item_id] = built.get(n.item_id, 0) + 1)
 	var total := int(minutes * 60.0 * 60.0)
 	var next_report := 60.0
 	while _frames < total:
@@ -70,3 +74,4 @@ func _report() -> void:
 		stats["returns"], stats["wins"], world.get_structures().size(), max_structures, gold,
 		_physics_us / 1000.0 / maxi(_frames, 1)])
 	print("       items held: %s" % str(items))
+	print("       pieces built: %s" % str(built))
