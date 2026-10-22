@@ -31,8 +31,10 @@ gather → craft basics → fight / defend → earn gold → unlock blueprints �
 - Map 400 × 720 m (~600 m crown to crown: a minute's sprint, 40 s on a horse),
   point-mirrored so both sides are identical. Each base sits on a flat plateau with the
   crown pedestal near the back and the spawn behind it.
-- **Terrain:** rolling hills and dry valleys (up to ~10 m relief), forests of real-size
-  trees (12–20 m pines and oaks) with clearings between them, and a river winding across
+- **Terrain:** rolling hills and dry valleys (up to ~10 m relief), ~1,900 real-size
+  trees (12–20 m pines and oaks) that thicken into dense woodland toward the middle of the
+  map and thin out toward the bases, with open ground within 75 m of each crown (room to
+  build, and attackers have to cross it in the open), and a river winding across
   the middle. The river is up to ~18 m of water but narrows to ~5 m at x = ±78 (drawbridge
   territory); two shallow fords at x = ±140 can be walked across. Wading is slow (45%
   speed, no sprint, no horse bonus).

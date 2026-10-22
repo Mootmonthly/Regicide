@@ -3,18 +3,23 @@ extends RefCounted
 ## Deterministic resource layout from a seed. Every peer runs this with the seed the
 ## server picks, so the ~1,700 resource nodes never need to be sent over the network.
 ## One half is generated and point-mirrored so both teams get an identical map.
-## Trees grow in forests (clusters), and nothing spawns in the river.
+## Trees grow in forests that get denser toward the middle of the map (the river valley
+## is thick woodland) and thin out toward the bases, with open ground around each crown.
+## Nothing spawns in the river.
 
 ## [resource type, count per half, min z, max z, max |x|]
 const ZONES := [
-	["wood", 560, 10.0, 356.0, 194.0],
+	["wood", 950, 10.0, 356.0, 194.0],
 	["stone", 200, 30.0, 300.0, 186.0],
 	["iron", 90, 40.0, 190.0, 170.0],
 	["magic_ore", 22, 6.0, 60.0, 80.0],  # contested middle, near the river
 ]
 const MIN_SPACING := 3.2
-const FOREST_THRESHOLD := 0.2
-const STRAY_TREE_CHANCE := 0.03
+## Forest noise cutoff and lone-tree chance, from the bases (first) to the middle (second).
+const FOREST_THRESHOLD := [0.3, -0.3]
+const STRAY_TREE_CHANCE := [0.02, 0.45]
+## Open ground around each crown (no trees within this distance).
+const CROWN_CLEARING := 75.0
 
 
 static func generate(map_seed: int) -> Array[Dictionary]:
@@ -34,8 +39,15 @@ static func generate(map_seed: int) -> Array[Dictionary]:
 		while placed < wanted and attempts < wanted * 60:
 			attempts += 1
 			var p := Vector3(rng.randf_range(-zone[4], zone[4]), 0.0, rng.randf_range(zone[2], zone[3]))
-			if type == "wood" and forest.get_noise_2d(p.x, p.z) < FOREST_THRESHOLD and rng.randf() > STRAY_TREE_CHANCE:
-				continue
+			if type == "wood":
+				if GameData.flat_distance(p, GameData.crown_pos(0)) < CROWN_CLEARING:
+					continue
+				# 1 in the middle of the map, 0 out by the bases.
+				var middle := 1.0 - clampf((p.z - 30.0) / 200.0, 0.0, 1.0)
+				var cutoff := lerpf(FOREST_THRESHOLD[0], FOREST_THRESHOLD[1], middle)
+				var stray := lerpf(STRAY_TREE_CHANCE[0], STRAY_TREE_CHANCE[1], middle)
+				if forest.get_noise_2d(p.x, p.z) < cutoff and rng.randf() > stray:
+					continue
 			if not _is_free(p, grid):
 				continue
 			p.y = Terrain.height(p.x, p.z)

@@ -94,6 +94,11 @@ func _run() -> void:
 	gm.request_primary("", dir, Vector3.ZERO)
 	check(int(gm.my_inventory.get("iron", 0)) == 0, "fists can't mine iron")
 
+	# Clear the woods so trees don't get in the way of the mechanics tests below.
+	for r in world.resource_nodes:
+		if r.res_type == "wood":
+			r.set_amount(0)
+
 	# --- Crafting ---
 	gm.request_craft("iron_sword")
 	check(rec.inventory.count("iron_sword") == 0, "can't craft without resources")
