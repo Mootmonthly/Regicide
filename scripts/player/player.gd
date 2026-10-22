@@ -126,8 +126,9 @@ var _flash_tween: Tween
 var _arm: SpringArm3D
 var _viewmodel: Node3D
 ## Where the first-person weapon rests (camera space).
-const VM_HAND_POS := Vector3(0.26, -0.24, -0.45)
-const VM_HAND_ROT := Vector3(0.15, 0.1, 0)
+const VM_HAND_POS := Vector3(0.3, -0.34, -0.52)
+## Upright, leaning forward and a little in toward the middle of the screen.
+const VM_HAND_ROT := Vector3(-0.1, -0.5, 0.25)
 var _vm_hand: Node3D
 var _vm_weapon: Node3D
 var _vm_shield: Node3D
@@ -497,7 +498,7 @@ func _swing(push: bool, spell := false) -> void:
 			vm.tween_property(_vm_hand, "position:z", VM_HAND_POS.z - 0.25, 0.06)
 			vm.tween_property(_vm_hand, "position:z", VM_HAND_POS.z, 0.2)
 		else:
-			vm.tween_property(_vm_hand, "rotation:x", -1.2, 0.08)
+			vm.tween_property(_vm_hand, "rotation:x", -1.5, 0.08)
 			vm.tween_property(_vm_hand, "rotation:x", VM_HAND_ROT.x, 0.2)
 
 
@@ -510,6 +511,7 @@ func _on_damaged(amount: float) -> void:
 	if _flash_material == null:
 		_flash_material = Visuals.mat(Color(1, 1, 1, 0.75), 2.0)
 	_look.flash(_flash_material)
+	_look.play_action("hit")
 	if _flash_tween:
 		_flash_tween.kill()
 	_flash_tween = create_tween()
@@ -591,6 +593,8 @@ func _refresh_weapon() -> void:
 	if _hand == null or Net.is_dedicated():
 		return
 	var kind: String = GameData.item(equipped).get("kind", "fists")
+	if _look:
+		_look.held_item = equipped
 	if _weapon:
 		_weapon.queue_free()
 		_weapon = null
@@ -604,7 +608,7 @@ func _refresh_weapon() -> void:
 			_vm_weapon.queue_free()
 			_vm_weapon = null
 		if kind != "fists":
-			_vm_weapon = CharacterVisual.make_held(equipped, team)
+			_vm_weapon = CharacterVisual.make_held(equipped, team, true)
 			_vm_hand.add_child(_vm_weapon)
 
 
@@ -634,7 +638,7 @@ func _refresh_mount() -> void:
 	if _horse == null:
 		return
 	_horse.visible = mounted
-	_body.position.y = 0.95 if mounted else 0.0
+	_body.position.y = 1.3 if mounted else 0.0  # sitting on the horse's back
 
 
 func _build_camera() -> void:
@@ -657,7 +661,7 @@ func _build_camera() -> void:
 	_vm_hand = Node3D.new()
 	_vm_hand.position = VM_HAND_POS
 	_vm_hand.rotation = VM_HAND_ROT
-	_vm_hand.scale = Vector3.ONE * 0.32
+	_vm_hand.scale = Vector3.ONE * 0.27
 	_viewmodel.add_child(_vm_hand)
 	_vm_shield = Node3D.new()
 	_viewmodel.add_child(_vm_shield)
@@ -703,7 +707,6 @@ func _refresh_shield() -> void:
 			c.queue_free()
 		if shield_item != "":
 			var model := CharacterVisual.make_held(shield_item, team)
-			model.rotation.y = PI * 0.5  # flat against the forearm
 			_shield_mesh.add_child(model)
 			if is_local():
 				_set_layer(model, BODY_LAYER)
@@ -712,8 +715,8 @@ func _refresh_shield() -> void:
 			c.queue_free()
 		_vm_shield.visible = shield_item != ""
 		if shield_item != "":
-			_vm_shield.add_child(CharacterVisual.make_held(shield_item, team))
-		_vm_shield.position = Vector3(-0.1, -0.12, -0.5) if blocking else Vector3(-0.36, -0.3, -0.6)
+			_vm_shield.add_child(CharacterVisual.make_held(shield_item, team, true))
+		_vm_shield.position = Vector3(-0.1, -0.12, -0.5) if blocking else Vector3(-0.4, -0.34, -0.6)
 		_vm_shield.rotation = Vector3.ZERO if blocking else Vector3(0.25, 0.7, 0.1)
 		_vm_shield.scale = Vector3.ONE * (0.4 if blocking else 0.26)
 

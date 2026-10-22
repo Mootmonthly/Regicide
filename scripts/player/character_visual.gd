@@ -1,116 +1,268 @@
 class_name CharacterVisual
 extends Node3D
-## How a player looks: an animated Kenney Mini Character (picked from the player's id)
-## with a team-colored cape and plume, the equipped item in the right hand and a shield
-## on the left arm. Plays idle / walk / sprint / jump / fall / attack / shoot / cast /
-## block / ride animations from what the player is doing.
+## How a player looks: the KayKit Knight (everyone wears the same armour; the cape,
+## chest rose and shield faces take the team's colour). Weapons sit in the knight's
+## hand-slot bones, and an animation is picked from what the player is doing and holding:
+## idle / walk / run / jump / block / ride, sword slices, axe chops, pickaxe swings,
+## bow and crossbow shots, spellcasting, potion drinking, hit reactions and death.
 
-const MODELS := [
-	"character-male-a", "character-female-a", "character-male-b", "character-female-b",
-	"character-male-c", "character-female-c", "character-male-d", "character-female-d",
-	"character-male-e", "character-female-e", "character-male-f", "character-female-f",
-]
-const HEIGHT := 1.75
-const LOOPING := ["idle", "walk", "sprint", "holding-left", "holding-right", "holding-both", "sit", "fall", "crouch"]
+const MODEL := "res://assets/kaykit/Knight.glb"
+const ANIMATION_FILES := ["General", "MovementBasic", "MovementAdvanced", "CombatMelee", "CombatRanged", "Tools"]
+const HEIGHT := 1.8
+const LOOPING := ["Idle_A", "Idle_B", "Walking_A", "Walking_B", "Running_A", "Running_B", "Jump_Idle",
+	"Melee_Blocking", "Ranged_Bow_Idle", "Ranged_Bow_Aiming_Idle", "Ranged_1H_Aiming", "Crouching",
+	"Melee_Unarmed_Idle", "Running_HoldingBow", "Walking_Backwards"]
+## Items carried upright in the right hand (see ArmHold).
+const HELD_UPRIGHT := ["iron_sword", "stone_axe", "pickaxe", "wooden_club", "war_hammer"]
+const SWORD_SWINGS := ["Melee_1H_Attack_Slice_Diagonal", "Melee_1H_Attack_Slice_Horizontal", "Melee_1H_Attack_Chop"]
+
+## How each item is held. KayKit models are made for the hand slot as they are; other
+## models stand upright (+Y) with the grip a little above their bottom. "fp_base" then
+## "fp" (degrees) are the extra rotation that makes the item look right in first person,
+## where +Y is up and -Z is straight ahead.
+const HELD := {
+	"iron_sword": {"kaykit": "sword_1handed"},
+	"stone_axe": {"kaykit": "axe_1handed"},
+	# The bow model lies along Z with its belly toward -X: stand it up, belly forward.
+	# In first person it is also turned and canted so its curve shows.
+	"shortbow": {"kaykit": "bow_withString", "fp_base": Basis(Vector3(0, 0, 1), Vector3(1, 0, 0), Vector3(0, 1, 0)), "fp": Vector3(0, 60, 25)},
+	"crossbow": {"kaykit": "crossbow_1handed", "fp": Vector3(0, 165, 0)},
+	"wooden_shield": {"kaykit": "shield_round_color"},
+	"iron_shield": {"kaykit": "shield_badge_color"},
+	"pickaxe": {"model": "res://assets/survival/tool-pickaxe.glb", "length": 0.95},
+	"wooden_club": {"model": "res://assets/survival/tool-hammer.glb", "length": 0.9},
+	"war_hammer": {"model": "res://assets/survival/tool-hammer-upgraded.glb", "length": 1.05},
+}
+
+## Bones of the right arm that hold a weapon upright while walking, running and idling.
+const HOLD_BONES := ["upperarm.r", "lowerarm.r", "wrist.r", "hand.r"]
+const HOLD_POSE := "Holding_A"
+
+static var _library: AnimationLibrary
+static var _team_materials: Dictionary = {}  ## (team, tinted steel) -> recoloured material
 
 var anim: AnimationPlayer
-var right_hand: Node3D  ## held item goes here (meters, pointing forward along -Z)
+var right_hand: Node3D  ## held item goes here (meters, KayKit hand-slot orientation)
 var left_hand: Node3D  ## shield goes here
-var model_path := ""
+var held_item := ""  ## what's in the right hand, for picking animations
+var team := 0
 var _model: Node3D
-var _scale := 1.0
 var _meshes: Array[MeshInstance3D] = []
 var _one_shot_until := 0.0
 var _current := ""
+var _swing := 0
+var _hold: ArmHold
 
 
-func setup(peer_id: int, team: int) -> void:
-	model_path = "res://assets/characters/%s.glb" % MODELS[absi(peer_id) % MODELS.size()]
+## Poses the right arm like the Holding_A animation (weapon upright in front of the
+## chest) on top of whatever the legs and body are doing. Its influence is faded to 0
+## during attacks and other actions, so those play exactly as animated.
+class ArmHold extends SkeletonModifier3D:
+	var targets: Dictionary = {}  ## bone index -> Quaternion
+
+	func setup(skeleton: Skeleton3D, animation: Animation) -> void:
+		for t in animation.get_track_count():
+			if animation.track_get_type(t) != Animation.TYPE_ROTATION_3D:
+				continue
+			var bone := String(animation.track_get_path(t)).get_slice(":", 1)
+			if bone in CharacterVisual.HOLD_BONES:
+				targets[skeleton.find_bone(bone)] = animation.rotation_track_interpolate(t, 0.0)
+
+	func _process_modification() -> void:
+		var skeleton := get_skeleton()
+		if skeleton == null:
+			return
+		for bone: int in targets:
+			skeleton.set_bone_pose_rotation(bone, targets[bone])
+
+
+## Meters per KayKit unit (the knight model is about 2.4 units tall).
+static func unit_scale() -> float:
+	return HEIGHT / maxf((Models.info(MODEL)["aabb"] as AABB).size.y, 0.001)
+
+
+func setup(_peer_id: int, p_team: int) -> void:
+	team = p_team
 	_model = _instantiate()
 	add_child(_model)
 	anim = _model.find_child("AnimationPlayer", true, false) as AnimationPlayer
-	if anim:
-		for n: String in LOOPING:
-			if anim.has_animation(n):
-				anim.get_animation(n).loop_mode = Animation.LOOP_LINEAR
-		anim.play("idle")
-	var skeleton := _model.find_child("Skeleton3D", true, false) as Skeleton3D
+	anim.play("Idle_A")
 	for mi in _model.find_children("*", "MeshInstance3D", true, false):
 		_meshes.append(mi as MeshInstance3D)
-	if skeleton == null:
-		return
-	right_hand = _attach(skeleton, "arm-right", Vector3(-0.01, -0.1, 0.02))
-	left_hand = _attach(skeleton, "arm-left", Vector3(0.02, -0.08, 0.03))
-	# Team colors: a cape on the back and a plume on top of the head.
-	var tc := GameData.team_color(team)
-	var back := _attach(skeleton, "torso", Vector3(0, 0.07, -0.075))
-	var cape := Visuals.box(Vector3(0.36, 0.42, 0.03), tc, Vector3(0, -0.1, 0))
-	cape.rotation.x = 0.12
-	back.add_child(cape)
-	var head := _attach(skeleton, "head", Vector3(0, 0.0, 0))
-	head.add_child(Visuals.box(Vector3(0.07, 0.22, 0.3), tc.lightened(0.15), Vector3(0, 0.55, -0.02)))
+	var skeleton := _model.find_child("Skeleton3D", true, false) as Skeleton3D
+	_hold = ArmHold.new()
+	skeleton.add_child(_hold)
+	_hold.setup(skeleton, animation_library().get_animation(HOLD_POSE))
+	_hold.influence = 0.0
+	right_hand = _attach(skeleton, "handslot.r")
+	left_hand = _attach(skeleton, "handslot.l")
 
 
 func _instantiate() -> Node3D:
-	var m := Models.info(model_path)
-	var node := (m["scene"] as PackedScene).instantiate() as Node3D
-	_scale = HEIGHT / maxf((m["aabb"] as AABB).size.y, 0.001)
-	node.scale = Vector3.ONE * _scale
-	node.rotation.y = PI  # Kenney characters face +Z; ours face -Z
+	var node := (load(MODEL) as PackedScene).instantiate() as Node3D
+	node.scale = Vector3.ONE * unit_scale()
+	node.rotation.y = PI  # KayKit characters face +Z; ours face -Z
+	# The visor hides the face; leave the helmet open.
+	var visor := node.find_child("Knight_HelmetVisor", true, false) as Node3D
+	if visor:
+		visor.visible = false
+	apply_team_colors(node, team)
+	var ap := AnimationPlayer.new()
+	ap.name = "AnimationPlayer"
+	node.add_child(ap)
+	ap.add_animation_library("", animation_library())
 	return node
 
 
-## A node riding on a bone, in meters (undoes the model's scale).
-func _attach(skeleton: Skeleton3D, bone: String, offset_model_units: Vector3) -> Node3D:
+## A node riding on a bone, in meters and in the bone's orientation.
+func _attach(skeleton: Skeleton3D, bone: String) -> Node3D:
 	var att := BoneAttachment3D.new()
 	att.bone_name = bone
 	skeleton.add_child(att)
 	var holder := Node3D.new()
-	holder.position = offset_model_units
-	holder.scale = Vector3.ONE / _scale
-	# Undo the model's 180 degree turn so held items point the way the player faces.
-	holder.rotation.y = PI
+	holder.scale = Vector3.ONE / unit_scale()
 	att.add_child(holder)
 	return holder
 
 
+## Every KayKit animation, shared by all characters.
+static func animation_library() -> AnimationLibrary:
+	if _library:
+		return _library
+	_library = AnimationLibrary.new()
+	for file: String in ANIMATION_FILES:
+		var scene := load("res://assets/kaykit/anims/Rig_Medium_%s.glb" % file) as PackedScene
+		var root := scene.instantiate()
+		var ap := root.find_child("AnimationPlayer", true, false) as AnimationPlayer
+		if ap:
+			for n in ap.get_animation_list():
+				if not _library.has_animation(n):
+					var a := ap.get_animation(n).duplicate() as Animation
+					a.loop_mode = Animation.LOOP_LINEAR if n in LOOPING else Animation.LOOP_NONE
+					_library.add_animation(n, a)
+		root.free()
+	return _library
+
+
+## The knight's texture with its red parts (cape, rose, shield faces) in the team colour
+## and its steel lightly tinted, so teams can be told apart from any side.
+static func team_material(p_team: int, tint_steel := true) -> StandardMaterial3D:
+	var key := Vector2i(p_team, int(tint_steel))
+	if _team_materials.has(key):
+		return _team_materials[key]
+	var src := (load("res://assets/kaykit/knight_texture.png") as Texture2D).get_image()
+	if src.is_compressed():
+		src.decompress()
+	var target := GameData.team_color(p_team)
+	var img := src.duplicate() as Image
+	if img.has_mipmaps():
+		img.clear_mipmaps()
+	for y in img.get_height():
+		for x in img.get_width():
+			var c := img.get_pixel(x, y)
+			if c.s > 0.45 and (c.h < 0.04 or c.h > 0.94):
+				img.set_pixel(x, y, Color.from_hsv(target.h, clampf(c.s * target.s / 0.75, 0.0, 1.0), c.v, c.a))
+			elif tint_steel and c.s < 0.15 and c.v > 0.25:  # grey steel: a light wash of the team colour
+				img.set_pixel(x, y, Color.from_hsv(target.h, 0.22, c.v, c.a))
+	img.generate_mipmaps()
+	var mat := StandardMaterial3D.new()
+	mat.albedo_texture = ImageTexture.create_from_image(img)
+	mat.roughness = 1.0
+	mat.metallic_specular = 0.3
+	_team_materials[key] = mat
+	return mat
+
+
+## Swap the knight texture for the team-coloured one on every mesh under `node`.
+static func apply_team_colors(node: Node, p_team: int, tint_steel := true) -> void:
+	if Net.is_dedicated():
+		return
+	var mat := team_material(p_team, tint_steel)
+	for n in node.find_children("*", "MeshInstance3D", true, false):
+		var mi := n as MeshInstance3D
+		if mi.mesh == null:
+			continue
+		for s in mi.mesh.get_surface_count():
+			var m := mi.mesh.surface_get_material(s) as BaseMaterial3D
+			if m and m.albedo_texture and m.albedo_texture.resource_path.contains("knight_texture"):
+				mi.set_surface_override_material(s, mat)
+
+
 ## Pick the looping animation for the current movement.
 func update_motion(horizontal_speed: float, vertical_speed: float, on_ground: bool, mounted: bool, blocking: bool) -> void:
-	if anim == null or Time.get_ticks_msec() / 1000.0 < _one_shot_until:
+	if anim == null:
 		return
-	var want := "idle"
+	var acting := Time.get_ticks_msec() / 1000.0 < _one_shot_until
+	if _hold:
+		var hold := not acting and not blocking and held_item in HELD_UPRIGHT
+		_hold.influence = move_toward(_hold.influence, 1.0 if hold else 0.0, get_process_delta_time() * 6.0)
+	if acting:
+		return
+	var bow := held_item == "shortbow"
+	var want := "Ranged_Bow_Idle" if bow else ("Ranged_1H_Aiming" if held_item == "crossbow" else "Idle_A")
 	if mounted:
-		want = "sit"
-	elif not on_ground and vertical_speed < -3.0:
-		want = "fall"
-	elif not on_ground and vertical_speed > 1.0:
-		want = "jump"
+		want = "Crouching"
+	elif not on_ground and absf(vertical_speed) > 1.5:
+		want = "Jump_Idle"
 	elif blocking:
-		want = "holding-left"
+		want = "Melee_Blocking"
 	elif horizontal_speed > 7.0:
-		want = "sprint"
+		want = "Running_HoldingBow" if bow else "Running_A"
 	elif horizontal_speed > 0.6:
-		want = "walk"
+		want = "Walking_A"
 	if want != _current:
 		_current = want
 		anim.play(want, 0.15)
-	if want == "walk":
-		anim.speed_scale = clampf(horizontal_speed / 4.0, 0.6, 1.6)
+	if want == "Walking_A":
+		anim.speed_scale = clampf(horizontal_speed / 3.0, 0.6, 1.8)
+	elif want.begins_with("Running"):
+		anim.speed_scale = clampf(horizontal_speed / 7.5, 0.8, 1.5)
 	else:
 		anim.speed_scale = 1.0
 
 
-## One-shot action animation: "melee", "shoot" or "cast".
+## One-shot action animation: "melee", "shoot", "cast", "use", "hit" or "build".
 func play_action(kind: String) -> void:
-	if anim == null:
+	if anim == null or (kind == "hit" and Time.get_ticks_msec() / 1000.0 < _one_shot_until):
 		return
-	var name: String = {"melee": "attack-melee-right", "shoot": "holding-right-shoot", "cast": "interact-right"}.get(kind, "")
+	var name := _action_animation(kind)
 	if name == "" or not anim.has_animation(name):
 		return
-	anim.speed_scale = 1.6
+	var speed := 1.0 if kind == "hit" else 1.7
+	anim.speed_scale = speed
+	if _hold:
+		_hold.influence = 0.0
 	anim.play(name, 0.05)
+	anim.seek(0.0, true)
 	_current = name
-	_one_shot_until = Time.get_ticks_msec() / 1000.0 + anim.get_animation(name).length / 1.6
+	_one_shot_until = Time.get_ticks_msec() / 1000.0 + anim.get_animation(name).length / speed * 0.85
+
+
+func _action_animation(kind: String) -> String:
+	match kind:
+		"melee":
+			match held_item:
+				"", "fists":
+					return "Melee_Unarmed_Attack_Punch_A"
+				"stone_axe":
+					return "Chop"
+				"pickaxe":
+					return "Pickaxe"
+				"wooden_club", "war_hammer":
+					return "Melee_1H_Attack_Chop"
+			_swing += 1
+			return SWORD_SWINGS[_swing % SWORD_SWINGS.size()]
+		"shoot":
+			return "Ranged_Bow_Release" if held_item == "shortbow" else "Ranged_1H_Shoot"
+		"cast":
+			return "Ranged_Magic_Shoot"
+		"use":
+			return "Use_Item"
+		"hit":
+			return "Hit_A"
+		"build":
+			return "Interact"
+	return ""
 
 
 func flash(material: Material) -> void:
@@ -126,88 +278,60 @@ func spawn_corpse(parent: Node, at: Transform3D) -> void:
 	var body := _instantiate()
 	holder.add_child(body)
 	var ap := body.find_child("AnimationPlayer", true, false) as AnimationPlayer
-	if ap and ap.has_animation("die"):
-		ap.play("die")
+	if ap and ap.has_animation("Death_A"):
+		ap.play("Death_A")
 	var t := holder.create_tween()
-	t.tween_interval(2.5)
+	t.tween_interval(3.0)
 	t.tween_property(holder, "position:y", holder.position.y - 1.0, 1.2)
 	t.tween_callback(holder.queue_free)
 
 
 # --- Held items ----------------------------------------------------------------------
 
-## A model of an item as held in the hand: grip at the origin, pointing along -Z.
-static func make_held(item_id: String, team: int) -> Node3D:
+## A model of an item as held, in meters. Oriented for the knight's hand slot (+Y runs
+## from the grip toward the blade / head), or, with `first_person`, for the camera.
+static func make_held(item_id: String, p_team: int, first_person := false) -> Node3D:
 	var root := Node3D.new()
 	var def := GameData.item(item_id)
 	var kind: String = def.get("kind", "fists")
 	var color: Color = def.get("color", Color.WHITE)
-	var steel := Color(0.78, 0.8, 0.85)
 	var wood := Color(0.45, 0.3, 0.16)
-	if def.has("model"):
+	var spec: Dictionary = HELD.get(item_id, {})
+	if first_person and spec.has("fp"):
+		var euler: Vector3 = spec["fp"]
+		root.basis = Basis.from_euler(euler * PI / 180.0) * (spec.get("fp_base", Basis()) as Basis)
+	if spec.has("kaykit"):
+		var node := (load("res://assets/kaykit/items/%s.gltf" % spec["kaykit"]) as PackedScene).instantiate() as Node3D
+		node.scale = Vector3.ONE * unit_scale()
+		apply_team_colors(node, p_team, false)
+		root.add_child(node)
+		return root
+	if spec.has("model"):
 		var pivot := Node3D.new()
-		pivot.rotation_degrees = Vector3(-90, 0, 0)  # model's up -> forward
-		pivot.position = Vector3(0, 0, 0.15)
-		pivot.add_child(Models.standing(def["model"], 0.85))
+		pivot.position = Vector3(0, -0.15, 0)
+		pivot.add_child(Models.standing(spec["model"], spec.get("length", 0.9)))
 		root.add_child(pivot)
 		return root
 	match kind:
-		"weapon":  # sword
-			root.add_child(Visuals.box(Vector3(0.05, 0.05, 0.2), wood, Vector3(0, 0, 0.02)))
-			root.add_child(Visuals.box(Vector3(0.3, 0.05, 0.06), Color(0.55, 0.45, 0.2), Vector3(0, 0, -0.1)))
-			root.add_child(Visuals.box(Vector3(0.08, 0.02, 0.85), color, Vector3(0, 0, -0.55)))
-			root.add_child(Visuals.box(Vector3(0.07, 0.07, 0.07), Color(0.55, 0.45, 0.2), Vector3(0, 0, 0.14)))
-		"ranged":
-			if item_id == "crossbow":
-				root.add_child(Visuals.box(Vector3(0.08, 0.1, 0.7), wood, Vector3(0, 0, -0.25)))
-				for side in [-1.0, 1.0]:
-					var arm := Visuals.box(Vector3(0.35, 0.04, 0.05), color, Vector3(side * 0.17, 0, -0.52))
-					arm.rotation.y = side * 0.25
-					root.add_child(arm)
-				root.add_child(Visuals.box(Vector3(0.62, 0.01, 0.01), Color(0.9, 0.9, 0.85), Vector3(0, 0, -0.45)))
-			else:
-				# A curved stave held upright, string toward the archer.
-				for k in 7:
-					var t := (k - 3) / 3.0
-					var seg := Visuals.box(Vector3(0.035, 0.2, 0.035), color, Vector3(0, t * 0.55, -0.08 - 0.12 * (1.0 - t * t)))
-					seg.rotation.x = t * 0.5
-					root.add_child(seg)
-				root.add_child(Visuals.box(Vector3(0.008, 1.1, 0.008), Color(0.92, 0.92, 0.88), Vector3(0, 0, 0.03)))
-		"shield":
-			var disc := CylinderMesh.new()
-			disc.top_radius = 0.36
-			disc.bottom_radius = 0.36
-			disc.height = 0.05
-			disc.radial_segments = 16
-			var face := Visuals.mesh_instance(disc, color, Vector3.ZERO)
-			face.rotation.x = PI * 0.5
-			root.add_child(face)
-			var rim := CylinderMesh.new()
-			rim.top_radius = 0.39
-			rim.bottom_radius = 0.39
-			rim.height = 0.03
-			rim.radial_segments = 16
-			var rim_mi := Visuals.mesh_instance(rim, GameData.team_color(team), Vector3(0, 0, 0.02))
-			rim_mi.rotation.x = PI * 0.5
-			root.add_child(rim_mi)
-			var boss := SphereMesh.new()
-			boss.radius = 0.08
-			boss.height = 0.1
-			root.add_child(Visuals.mesh_instance(boss, steel, Vector3(0, 0, -0.04)))
-		"spell":
+		"spell":  # a glowing orb on a short wand
+			root.add_child(Visuals.box(Vector3(0.04, 0.4, 0.04), wood, Vector3(0, 0.1, 0)))
 			var orb := SphereMesh.new()
-			orb.radius = 0.09
-			orb.height = 0.18
-			root.add_child(Visuals.mesh_instance(orb, color, Vector3(0, 0, -0.15), 1.5))
+			orb.radius = 0.08
+			orb.height = 0.16
+			root.add_child(Visuals.mesh_instance(orb, color, Vector3(0, 0.35, 0), 1.5))
 		"consumable":
 			var bottle := CylinderMesh.new()
 			bottle.top_radius = 0.035
 			bottle.bottom_radius = 0.07
 			bottle.height = 0.2
-			root.add_child(Visuals.mesh_instance(bottle, color, Vector3(0, 0, -0.1)))
-			root.add_child(Visuals.box(Vector3(0.04, 0.05, 0.04), wood, Vector3(0, 0.12, -0.1)))
+			root.add_child(Visuals.mesh_instance(bottle, color, Vector3(0, 0.1, 0)))
+			root.add_child(Visuals.box(Vector3(0.04, 0.05, 0.04), wood, Vector3(0, 0.22, 0)))
 		"structure":
-			var crate := Visuals.box(Vector3(0.28, 0.28, 0.28), color, Vector3(0, 0, -0.15))
+			var crate := Visuals.box(Vector3(0.28, 0.28, 0.28), color, Vector3(0, 0.1, 0))
 			crate.material_override = Visuals.textured(def.get("material", "wood"), color)
 			root.add_child(crate)
+		"weapon":  # any sword without its own model
+			root.add_child(Visuals.box(Vector3(0.05, 0.2, 0.05), wood, Vector3(0, 0.0, 0)))
+			root.add_child(Visuals.box(Vector3(0.3, 0.05, 0.06), Color(0.55, 0.45, 0.2), Vector3(0, 0.12, 0)))
+			root.add_child(Visuals.box(Vector3(0.11, 0.85, 0.035), color, Vector3(0, 0.57, 0)))
 	return root

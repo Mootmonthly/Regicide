@@ -34,6 +34,11 @@ var _player_scene: PackedScene
 
 func _ready() -> void:
 	_build_arena()
+	if not Net.is_dedicated():
+		# Recolour the knight texture for each team now, not when the first player spawns.
+		for t in GameData.TEAM_COUNT:
+			CharacterVisual.team_material(t, true)
+			CharacterVisual.team_material(t, false)
 	for t in GameData.TEAM_COUNT:
 		var crown := Crown.new()
 		crown.team = t

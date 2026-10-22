@@ -80,7 +80,6 @@ const ITEMS := {
 	# Tools
 	"stone_axe": {
 		"name": "Stone Axe", "kind": "tool", "unlock_cost": 0,
-		"model": "res://assets/survival/tool-axe.glb",
 		"recipe": {"wood": 6, "stone": 3},
 		"damage": 14.0, "range": 2.4, "cooldown": 0.6, "structure_damage": 8.0,
 		"gather": {"wood": 4, "stone": 1},
@@ -89,7 +88,6 @@ const ITEMS := {
 	},
 	"pickaxe": {
 		"name": "Pickaxe", "kind": "tool", "unlock_cost": 0,
-		"model": "res://assets/survival/tool-pickaxe.glb",
 		"recipe": {"wood": 5, "stone": 5},
 		"damage": 12.0, "range": 2.4, "cooldown": 0.7, "structure_damage": 10.0,
 		"gather": {"wood": 1, "stone": 4, "iron": 3, "magic_ore": 2},
@@ -99,7 +97,6 @@ const ITEMS := {
 	# Weapons
 	"wooden_club": {
 		"name": "Wooden Club", "kind": "weapon", "unlock_cost": 0,
-		"model": "res://assets/survival/tool-hammer.glb",
 		"recipe": {"wood": 8},
 		"damage": 18.0, "range": 2.3, "cooldown": 0.6, "structure_damage": 6.0,
 		"gather": {"wood": 1},
@@ -116,7 +113,6 @@ const ITEMS := {
 	},
 	"war_hammer": {
 		"name": "War Hammer", "kind": "weapon", "unlock_cost": 150,
-		"model": "res://assets/survival/tool-hammer-upgraded.glb",
 		"recipe": {"wood": 4, "iron": 12},
 		"damage": 45.0, "range": 2.6, "cooldown": 1.1, "structure_damage": 45.0,
 		"gather": {"stone": 2},

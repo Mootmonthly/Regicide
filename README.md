@@ -122,6 +122,11 @@ See [docs/DESIGN.md](docs/DESIGN.md) for the game design and roadmap, and
 
 ## Credits
 
-3D models are from [Kenney](https://kenney.nl) (CC0 / public domain): Castle Kit,
-Survival Kit, Nature Kit and Mini Characters. Each pack's license is next to its models
-in `assets/`.
+3D models are CC0 (public domain):
+
+- The knight, his animations, swords, axe, bows and shields: KayKit Adventurers and
+  KayKit Character Animations by [Kay Lousberg](https://www.kaylousberg.com)
+- Castle pieces, camp tools, trees, rocks and plants: Castle Kit, Survival Kit and
+  Nature Kit by [Kenney](https://kenney.nl)
+
+Each pack's license is next to its models in `assets/`.
