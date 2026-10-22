@@ -569,6 +569,41 @@ func _run() -> void:
 		w.expires_at = gm.clock
 	await _frames(3)
 	check(world.get_summons().is_empty(), "they fade when their time is up")
+	# Bots fight enemy warriors too.
+	rec.spell_ready.clear()
+	me.mana = me.max_mana
+	_place(me, Vector3(-150, 0, 60), Vector3(-150, 0, 40))
+	await _frames(2)
+	_ready_to_act(1)
+	gm.perform_primary(1, "spectral_warriors", Vector3(0, 0, -1), Vector3.ZERO)
+	await _frames(2)
+	me.alive = false  # out of the picture: the warriors are the only enemies around
+	gm._add_bot(1)
+	var bot_id := gm._next_bot_id + 1
+	var fighter := world.get_player(bot_id)
+	var brec: PlayerRecord = gm.records[bot_id]
+	brec.inventory.add("iron_sword", 1)
+	brec.protected_until = gm.clock + 100.0  # so the warriors can't kill it first
+	fighter.teleport(Vector3(-150, 0, 57))
+	var pack_hp := 0.0
+	for w in world.get_summons():
+		pack_hp += w.health
+	var pack_hit := false
+	for i in 360:
+		await get_tree().physics_frame
+		var now_hp := 0.0
+		for w in world.get_summons():
+			now_hp += w.health
+		if now_hp < pack_hp or world.get_summons().size() < 5:
+			pack_hit = true
+			break
+	check(pack_hit, "a bot fights enemy spectral warriors")
+	for w in world.get_summons():
+		gm.remove_summon(w)
+	gm._remove_player(bot_id)
+	me.alive = true
+	me.health = me.max_health
+	await _frames(2)
 	# Skills: Spellweaver and Bloodlust.
 	rec.skill_points = 10
 	check(gm.perform_skill(1, "spellweaver"), "learn Spellweaver")

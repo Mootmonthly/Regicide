@@ -164,7 +164,7 @@ Casting costs mana (100 max, +2.5/s; mana potions restore 60).
 | Lightning | 200g + 4 ore | 40 | 32 damage, arcs to 2 more enemies for 16 |
 | Gust | 120g + 2 ore | 30 | Throws enemies in front of you 7 m back (6 damage); knocks a stolen crown out of the carrier's hands. 8 s recharge |
 | Meteor | 260g + 5 ore | 70 | Lands where you aim after a 1.5 s warning ring: 65 damage in 6 m, 350 to structures. 20 s recharge |
-| Spectral Warriors | 300g + 6 ore | 60 | 5 ghostly sword-knights for 60 s. They hunt any enemy (players or enemy warriors) within 50 m, follow you otherwise, and can be killed (60 health, 10 damage per hit; shields block them). 60 s recharge |
+| Spectral Warriors | 300g + 6 ore | 60 | 5 ghostly sword-knights for 60 s. They hunt any enemy (players or enemy warriors) within 50 m, follow you otherwise, and can be killed (60 health, 10 damage per hit; shields block them). Test bots fight them too. 60 s recharge |
 
 Each spell has its own recharge; casting only keeps your hands busy for up to 1 s.
 

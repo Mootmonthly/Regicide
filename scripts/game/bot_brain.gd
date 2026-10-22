@@ -210,16 +210,17 @@ func _go(new_task: Task, pos: Vector3, stop: float, new_target: Node = null) -> 
 	target = new_target
 
 
-func _engage(foe: Player) -> void:
+func _engage(foe: Node3D) -> void:
 	var rec := _rec()
 	var ranged := _ranged_weapon(rec)
-	var dist := GameData.flat_distance(player.sync_pos, foe.sync_pos)
+	var pos := _foe_pos(foe)
+	var dist := GameData.flat_distance(player.sync_pos, pos)
 	if ranged != "" and dist > 7.0:
 		var reach := float(GameData.item(ranged)["range"]) * 0.5
-		_go(Task.FIGHT, foe.sync_pos, reach, foe)
+		_go(Task.FIGHT, pos, reach, foe)
 	else:
 		var weapon := GameData.item(_melee_weapon(rec))
-		_go(Task.FIGHT, foe.sync_pos, float(weapon["range"]) - 0.5, foe)
+		_go(Task.FIGHT, pos, float(weapon["range"]) - 0.5, foe)
 
 
 func _plan_attack(theirs: CrownState) -> void:
@@ -462,8 +463,34 @@ func _siege_weapon(rec: PlayerRecord) -> String:
 	return best
 
 
-func _nearest_enemy(max_range: float) -> Player:
-	return gm.nearest_enemy(player.sync_pos, player.team, max_range)
+## The closest enemy to fight: a player, or an enemy spectral warrior.
+func _nearest_enemy(max_range: float) -> Node3D:
+	var best: Node3D = gm.nearest_enemy(player.sync_pos, player.team, max_range)
+	var best_d := player.sync_pos.distance_to(best.sync_pos) if best else max_range
+	for w in world.get_summons():
+		if w.team != player.team:
+			var d := player.sync_pos.distance_to(w.global_position)
+			if d <= best_d:
+				best = w
+				best_d = d
+	return best
+
+
+# Foes are players or spectral warriors; these treat both alike.
+static func _foe_alive(foe: Node) -> bool:
+	if foe == null or not is_instance_valid(foe) or foe.is_queued_for_deletion():
+		return false
+	if foe is Player:
+		return (foe as Player).alive
+	return foe is Summon
+
+
+static func _foe_pos(foe: Node3D) -> Vector3:
+	return (foe as Player).sync_pos if foe is Player else foe.global_position
+
+
+static func _foe_chest(foe: Node3D) -> Vector3:
+	return (foe as Player).chest() if foe is Player else (foe as Summon).chest()
 
 
 # =============================================================================
@@ -473,8 +500,8 @@ func _nearest_enemy(max_range: float) -> Player:
 func _steer(delta: float) -> void:
 	var me := player.global_position
 	if task == Task.FIGHT or (task == Task.ESCORT and target != null):
-		if is_instance_valid(target) and target is Player and (target as Player).alive:
-			goal = (target as Player).sync_pos
+		if _foe_alive(target):
+			goal = _foe_pos(target as Node3D)
 		else:
 			task = Task.IDLE
 			target = null
@@ -574,9 +601,9 @@ func _act() -> void:
 		return
 	if gm.clock < rec.next_action_time:
 		# Between swings in a melee, hold the shield up.
-		var foe := target as Player if task == Task.FIGHT and is_instance_valid(target) else null
-		player.blocking = player.shield_item != "" and foe != null \
-			and GameData.flat_distance(player.sync_pos, foe.sync_pos) < 4.0
+		var fighting := task == Task.FIGHT and _foe_alive(target)
+		player.blocking = player.shield_item != "" and fighting \
+			and GameData.flat_distance(player.sync_pos, _foe_pos(target as Node3D)) < 4.0
 		return
 	match task:
 		Task.GATHER:
@@ -611,7 +638,7 @@ func _act() -> void:
 			# On the move: still hit anyone right next to us.
 			var foe := _nearest_enemy(2.5)
 			if foe:
-				_use(_melee_weapon(rec), foe.sync_pos - player.sync_pos)
+				_use(_melee_weapon(rec), _foe_pos(foe) - player.sync_pos)
 
 
 func _fight(rec: PlayerRecord) -> void:
@@ -619,11 +646,13 @@ func _fight(rec: PlayerRecord) -> void:
 		task = Task.IDLE
 		target = null
 		return
-	var foe := target as Player
-	if foe == null or not foe.alive:
+	if not _foe_alive(target):
 		task = Task.IDLE
+		target = null
 		return
-	var dist := GameData.flat_distance(player.sync_pos, foe.sync_pos)
+	var foe := target as Node3D
+	var foe_pos := _foe_pos(foe)
+	var dist := GameData.flat_distance(player.sync_pos, foe_pos)
 	if _try_spell(rec, foe, dist):
 		return
 	var ranged := _ranged_weapon(rec)
@@ -632,7 +661,7 @@ func _fight(rec: PlayerRecord) -> void:
 		if dist > float(def["range"]) * 0.8:
 			return
 		var from := player.sync_pos + Vector3(0, 1.5, 0)
-		var to := foe.chest()
+		var to := _foe_chest(foe)
 		var flight := dist / float(def["speed"])
 		to.y += 0.5 * GameData.ARROW_GRAVITY * flight * flight
 		var aim := (to - from).normalized()
@@ -646,11 +675,12 @@ func _fight(rec: PlayerRecord) -> void:
 	var weapon := _melee_weapon(rec)
 	player.blocking = false
 	if dist <= float(GameData.item(weapon)["range"]) + 0.3:
-		_use(weapon, foe.sync_pos - player.sync_pos)
+		_use(weapon, foe_pos - player.sync_pos)
 
 
 ## Cast a learned spell if the moment is right. True if one was cast.
-func _try_spell(rec: PlayerRecord, foe: Player, dist: float) -> bool:
+func _try_spell(rec: PlayerRecord, foe: Node3D, dist: float) -> bool:
+	var carrier := foe is Player and (foe as Player).carrying_crown >= 0
 	if gm.clock < rec.next_action_time:
 		return false
 	var weave := rec.rank("spellweaver")
@@ -665,7 +695,7 @@ func _try_spell(rec: PlayerRecord, foe: Player, dist: float) -> bool:
 			"spectral_warriors":
 				want = dist < 30.0
 			"gust":
-				want = dist < 6.0 or (foe.carrying_crown >= 0 and dist < 8.5)
+				want = dist < 6.0 or (carrier and dist < 8.5)
 			"meteor":
 				want = dist > 8.0 and dist < float(def["range"]) * 0.8
 			"heal_aura":
@@ -674,9 +704,9 @@ func _try_spell(rec: PlayerRecord, foe: Player, dist: float) -> bool:
 				want = dist > 4.0 and dist < float(def["range"]) * 0.8
 		if not want:
 			continue
-		var aim := (foe.chest() - (player.sync_pos + Vector3(0, 1.5, 0))).normalized()
+		var aim := (_foe_chest(foe) - (player.sync_pos + Vector3(0, 1.5, 0))).normalized()
 		if id == "meteor":
-			aim = (foe.sync_pos - (player.sync_pos + Vector3(0, 1.5, 0))).normalized()
+			aim = (_foe_pos(foe) - (player.sync_pos + Vector3(0, 1.5, 0))).normalized()
 		player.equipped = id
 		if gm.perform_primary(player.peer_id, id, aim, Vector3.ZERO):
 			player.play_action_anim("spell")
