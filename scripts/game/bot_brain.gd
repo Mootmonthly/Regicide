@@ -41,10 +41,16 @@ const SHOPPING := {
 	Role.ATTACKER: ["horse_saddle", "health_potion", "war_hammer"],
 	Role.DEFENDER: ["ballista", "spike_trap", "health_potion", "crossbow"],
 }
+## Spells each role learns when it has the gold and magic ore, in order.
+const SPELLS := {
+	Role.GATHERER: ["heal_aura", "spectral_warriors", "meteor"],
+	Role.ATTACKER: ["gust", "spectral_warriors", "fireball"],
+	Role.DEFENDER: ["meteor", "frost_bolt", "lightning", "gust"],
+}
 const MELEE_PREFERENCE := ["war_hammer", "iron_sword", "wooden_club", "stone_axe", "pickaxe"]
 ## Resources a role keeps on hand once its wishlist is done (building is paid on placement).
 const RESERVES := {
-	Role.GATHERER: {},
+	Role.GATHERER: {"magic_ore": 6},  # for spells
 	Role.ATTACKER: {"wood": 8},  # two ladders
 	Role.DEFENDER: {"stone": 30, "wood": 30},
 }
@@ -358,6 +364,13 @@ func _manage_inventory(rec: PlayerRecord) -> void:
 		if rec.inventory.count("health_potion") > 0 and player.health < player.max_health * 0.45:
 			gm.perform_primary(player.peer_id, "health_potion", Vector3.FORWARD, Vector3.ZERO)
 			return
+	# Learn the next spell on our list once we can pay for it.
+	for id: String in SPELLS[role]:
+		if rec.unlocks.has(id):
+			continue
+		if rec.gold >= int(GameData.item(id)["unlock_cost"]) and rec.inventory.has_all(GameData.learn_materials(id)):
+			gm.perform_unlock(player.peer_id, id)
+		break
 	# Buy one blueprint we can afford.
 	for id: String in SHOPPING[role]:
 		if not rec.is_unlocked(id):
@@ -611,6 +624,8 @@ func _fight(rec: PlayerRecord) -> void:
 		task = Task.IDLE
 		return
 	var dist := GameData.flat_distance(player.sync_pos, foe.sync_pos)
+	if _try_spell(rec, foe, dist):
+		return
 	var ranged := _ranged_weapon(rec)
 	if ranged != "" and dist > 5.0:
 		var def := GameData.item(ranged)
@@ -632,6 +647,41 @@ func _fight(rec: PlayerRecord) -> void:
 	player.blocking = false
 	if dist <= float(GameData.item(weapon)["range"]) + 0.3:
 		_use(weapon, foe.sync_pos - player.sync_pos)
+
+
+## Cast a learned spell if the moment is right. True if one was cast.
+func _try_spell(rec: PlayerRecord, foe: Player, dist: float) -> bool:
+	if gm.clock < rec.next_action_time:
+		return false
+	var weave := rec.rank("spellweaver")
+	for id: String in SPELLS[role]:
+		if not rec.unlocks.has(id) or gm.clock < float(rec.spell_ready.get(id, 0.0)):
+			continue
+		var def := GameData.item(id)
+		if player.mana < GameData.spell_mana(def, weave):
+			continue
+		var want := false
+		match id:
+			"spectral_warriors":
+				want = dist < 30.0
+			"gust":
+				want = dist < 6.0 or (foe.carrying_crown >= 0 and dist < 8.5)
+			"meteor":
+				want = dist > 8.0 and dist < float(def["range"]) * 0.8
+			"heal_aura":
+				want = player.health < player.max_health * 0.6
+			"fireball", "frost_bolt", "lightning":
+				want = dist > 4.0 and dist < float(def["range"]) * 0.8
+		if not want:
+			continue
+		var aim := (foe.chest() - (player.sync_pos + Vector3(0, 1.5, 0))).normalized()
+		if id == "meteor":
+			aim = (foe.sync_pos - (player.sync_pos + Vector3(0, 1.5, 0))).normalized()
+		player.equipped = id
+		if gm.perform_primary(player.peer_id, id, aim, Vector3.ZERO):
+			player.play_action_anim("spell")
+			return true
+	return false
 
 
 func _use(item_id: String, direction: Vector3) -> void:

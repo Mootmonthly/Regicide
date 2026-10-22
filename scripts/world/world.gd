@@ -30,6 +30,8 @@ var _player_scene: PackedScene
 @onready var structures_root: Node3D = $Structures
 @onready var resources_root: Node3D = $Resources
 @onready var fx_root: Node3D = $Fx
+var summons_root: Node3D
+var summon_spawner: MultiplayerSpawner
 
 
 func _ready() -> void:
@@ -49,6 +51,15 @@ func _ready() -> void:
 
 	player_spawner.spawn_function = _spawn_player
 	structure_spawner.spawn_function = _spawn_structure
+	# Spectral warriors (and any future summons).
+	summons_root = Node3D.new()
+	summons_root.name = "Summons"
+	add_child(summons_root)
+	summon_spawner = MultiplayerSpawner.new()
+	summon_spawner.name = "SummonSpawner"
+	add_child(summon_spawner)
+	summon_spawner.spawn_path = summon_spawner.get_path_to(summons_root)
+	summon_spawner.spawn_function = _spawn_summon
 
 	voice = VoiceChat.new()
 	voice.name = "VoiceChat"
@@ -71,6 +82,15 @@ func _ready() -> void:
 
 func get_player(peer_id: int) -> Player:
 	return players_root.get_node_or_null(str(peer_id)) as Player
+
+
+func get_summons() -> Array[Summon]:
+	var out: Array[Summon] = []
+	if summons_root:
+		for c in summons_root.get_children():
+			if c is Summon and not c.is_queued_for_deletion():
+				out.append(c)
+	return out
 
 
 func get_players() -> Array[Player]:
@@ -231,6 +251,12 @@ func _spawn_player(data: Dictionary) -> Node:
 	p.name = str(p.peer_id)
 	p.position = data["pos"]
 	return p
+
+
+func _spawn_summon(data: Dictionary) -> Node:
+	var w := Summon.new()
+	w.setup(data)
+	return w
 
 
 func _spawn_structure(data: Dictionary) -> Node:
@@ -439,7 +465,8 @@ func fx_arrow(from: Vector3, velocity: Vector3, duration: float) -> void:
 
 
 ## Spell visuals: "frost" (bolt from -> to), "heal" (ring at from, radius = |to - from|),
-## "blink" (flash at both ends).
+## "blink" (flash at both ends), "gust" (wind from -> to), "summon" (warriors rising
+## in a ring of radius |to - from|).
 @rpc("authority", "call_local", "unreliable")
 func fx_spell(kind: String, from: Vector3, to: Vector3) -> void:
 	if Net.is_dedicated():
@@ -474,6 +501,25 @@ func fx_spell(kind: String, from: Vector3, to: Vector3) -> void:
 				debris(p, Color(0.75, 0.45, 1.0), 8)
 			Sfx.play_at("blink", from)
 			Sfx.play_at("blink", to)
+		"gust":
+			# A fan of pale streaks rushing outward.
+			var dir := (to - from)
+			var reach := dir.length()
+			dir = dir.normalized()
+			var side := dir.cross(Vector3.UP).normalized()
+			for k in 9:
+				var spread := (k - 4) / 4.0 * 0.55
+				var d := (dir + side * spread).normalized()
+				var streak := Visuals.box(Vector3(0.06, 0.06, 1.4), Color(0.9, 0.97, 1.0))
+				var start := from + Vector3(0, randf_range(-0.6, 0.5), 0) + d * 0.8
+				_projectile(streak, start, start + d * reach, 30.0)
+			Sfx.play_at("blink", from, 2.0)
+		"summon":
+			var radius := from.distance_to(to)
+			for k in 5:
+				var a := TAU * k / 5.0
+				debris(from + Vector3(cos(a), -0.8, sin(a)) * radius, Color(0.6, 0.8, 1.0), 10)
+			Sfx.play_at("heal", from, 3.0)
 
 
 ## A jagged lightning bolt through the given points.
@@ -617,6 +663,57 @@ func fx_fireball(from: Vector3, to: Vector3, radius: float) -> void:
 	var t := boom.create_tween().set_parallel()
 	t.tween_property(boom, "scale", Vector3.ONE * radius, 0.35)
 	t.tween_property(mat, "albedo_color:a", 0.0, 0.35)
+	t.chain().tween_callback(boom.queue_free)
+
+
+## A warning ring where a meteor will land, then the meteor itself and the blast.
+@rpc("authority", "call_local", "unreliable")
+func fx_meteor(at: Vector3, radius: float, delay: float) -> void:
+	if Net.is_dedicated():
+		return
+	var ring := CylinderMesh.new()
+	ring.top_radius = radius
+	ring.bottom_radius = radius
+	ring.height = 0.12
+	var ring_mat := Visuals.mat(Color(1.0, 0.18, 0.02, 0.5), 3.0).duplicate() as StandardMaterial3D
+	ring_mat.transparency = BaseMaterial3D.TRANSPARENCY_ALPHA
+	var mi := MeshInstance3D.new()
+	mi.mesh = ring
+	mi.material_override = ring_mat
+	mi.cast_shadow = GeometryInstance3D.SHADOW_CASTING_SETTING_OFF
+	fx_root.add_child(mi)
+	mi.global_position = at + Vector3(0, 0.25, 0)
+	var pulse := mi.create_tween().set_loops()
+	pulse.tween_property(ring_mat, "albedo_color:a", 0.75, 0.25)
+	pulse.tween_property(ring_mat, "albedo_color:a", 0.35, 0.25)
+	Sfx.play_at("fireball", at, 2.0)
+	# The rock falls from high up so it lands exactly when the damage happens.
+	var rock_mesh := SphereMesh.new()
+	rock_mesh.radius = 1.4
+	rock_mesh.height = 2.6
+	var rock := Visuals.mesh_instance(rock_mesh, Color(1.0, 0.4, 0.1), Vector3.ZERO, 2.5)
+	var sky := at + Vector3(18, 60, 10)
+	var fall := minf(delay, 1.0)
+	get_tree().create_timer(delay - fall).timeout.connect(func() -> void:
+		_projectile(rock, sky, at, sky.distance_to(at) / fall))
+	await get_tree().create_timer(delay).timeout
+	pulse.kill()
+	mi.queue_free()
+	Sfx.play_at("boom", at, 8.0)
+	debris(at + Vector3(0, 0.5, 0), Color(0.35, 0.3, 0.25), 24)
+	var boom_mesh := SphereMesh.new()
+	boom_mesh.radius = 1.0
+	boom_mesh.height = 2.0
+	var boom := MeshInstance3D.new()
+	boom.mesh = boom_mesh
+	var mat := Visuals.mat(Color(1.0, 0.4, 0.08, 0.7), 2.0).duplicate() as StandardMaterial3D
+	boom.material_override = mat
+	fx_root.add_child(boom)
+	boom.global_position = at
+	boom.scale = Vector3.ONE * 0.5
+	var t := boom.create_tween().set_parallel()
+	t.tween_property(boom, "scale", Vector3.ONE * radius * 1.1, 0.45)
+	t.tween_property(mat, "albedo_color:a", 0.0, 0.5)
 	t.chain().tween_callback(boom.queue_free)
 
 

@@ -229,7 +229,8 @@ func _run() -> void:
 	var tower_walls := [S.make_slot(10, 0, 0, 0), S.make_slot(10, -1, 0, 0), S.make_slot(9, 0, 0, 1)]
 	for slot: Dictionary in tower_walls:
 		_ready_to_act(1)
-		check(gm.perform_build(1, "wood_wall", slot), "wall placed at %s" % slot)
+		var why := world.placement_problem("wood_wall", slot)
+		check(gm.perform_build(1, "wood_wall", slot), "wall placed at %s %s" % [slot, why])
 	_ready_to_act(1)
 	check(not gm.perform_build(1, "stone_wall", tower_walls[0]), "a slot can't hold two walls")
 	_ready_to_act(1)
@@ -496,6 +497,99 @@ func _run() -> void:
 	gm.expire_structure(summoned)
 	await _frames(2)
 	check(world.get_structures().size() == walls_before, "and crumbles when its time is up")
+	# Gust throws enemies back and knocks a stolen crown loose.
+	for sp in ["gust", "meteor", "spectral_warriors"]:
+		rec.gold += 400
+		rec.inventory.add("magic_ore", 6)
+		gm.request_unlock(sp)
+		check(rec.unlocks.has(sp), "learn %s" % sp)
+	_place(me, Vector3(-120, 0, 60), Vector3(-120, 0, 40))
+	enemy.teleport(Vector3(-120, 0, 56))
+	enemy.health = enemy.max_health
+	var our_crown: CrownState = gm.crowns[0]
+	our_crown.state = CrownRules.State.CARRIED
+	our_crown.carrier = ENEMY
+	enemy.carrying_crown = 0
+	await _frames(3)
+	me.mana = me.max_mana
+	_ready_to_act(1)
+	check(gm.perform_primary(1, "gust", Vector3(0, 0, -1), Vector3.ZERO), "cast gust")
+	check(enemy.carrying_crown == -1 and our_crown.state == CrownRules.State.DROPPED, "gust knocks the crown out of the carrier's hands")
+	# (The enemy here is a stand-in for a remote player, so check where the server sent them.)
+	check(erec.last_valid_pos.z < 51.0, "gust throws the enemy back (to %.1f m away)" % (60.0 - erec.last_valid_pos.z))
+	check(enemy.health < enemy.max_health, "gust stings a little")
+	our_crown.send_home()
+	gm._sync_crowns()
+	# Casting a long-cooldown spell doesn't lock your other actions for its whole cooldown.
+	check(rec.next_action_time - gm.clock < 1.0, "spells only keep your hands busy briefly")
+	# Meteor: warning first, then the blast.
+	enemy.health = enemy.max_health
+	enemy.teleport(Vector3(-120, 0, 40))
+	await _frames(3)
+	me.mana = me.max_mana
+	_ready_to_act(1)
+	var to_spot := (Vector3(-120, 0, 40) - (me.sync_pos + Vector3(0, 1.5, 0))).normalized()
+	check(gm.perform_primary(1, "meteor", to_spot, Vector3.ZERO), "cast meteor")
+	await _frames(30)
+	check(enemy.health == enemy.max_health, "the meteor hasn't landed yet (time to dodge)")
+	await _frames(80)
+	check(enemy.health < enemy.max_health - 50.0, "the meteor hits hard (took %.0f)" % (enemy.max_health - enemy.health))
+	# Spectral warriors: five of them, hunting enemies.
+	await _frames(400)  # let the enemy respawn if the meteor killed them
+	gm._respawn(ENEMY)
+	enemy.health = enemy.max_health
+	erec.protected_until = 0.0
+	_place(me, Vector3(-120, 0, 60), Vector3(-120, 0, 40))
+	enemy.teleport(Vector3(-120, 0, 35))
+	await _frames(3)
+	me.mana = me.max_mana
+	_ready_to_act(1)
+	check(gm.perform_primary(1, "spectral_warriors", Vector3(0, 0, -1), Vector3.ZERO), "cast spectral warriors")
+	await _frames(3)
+	var warriors := world.get_summons()
+	check(warriors.size() == 5, "five spectral warriors rise (%d)" % warriors.size())
+	check(warriors.size() > 0 and warriors[0].team == 0 and warriors[0].owner_peer == 1, "they fight for the caster")
+	var spectral_ready := float(rec.spell_ready.get("spectral_warriors", 0.0)) - gm.clock
+	check(spectral_ready > 55.0 and spectral_ready <= 60.0, "spectral warriors recharge for 60 s")
+	var hp_before := enemy.health
+	for i in 240:
+		await get_tree().physics_frame
+		if enemy.health < hp_before:
+			break
+	check(enemy.health < hp_before, "the warriors charge and strike an enemy 25 m away")
+	# Enemies can fight back.
+	var w0: Summon = world.get_summons()[0]
+	var w_hp := w0.health
+	gm.damage_summon(w0, 25.0)
+	check(is_equal_approx(w0.health, w_hp - 25.0), "warriors can be hurt")
+	gm.damage_summon(w0, 100.0)
+	await _frames(2)
+	check(world.get_summons().size() == 4, "and cut down")
+	for w in world.get_summons():
+		w.expires_at = gm.clock
+	await _frames(3)
+	check(world.get_summons().is_empty(), "they fade when their time is up")
+	# Skills: Spellweaver and Bloodlust.
+	rec.skill_points = 10
+	check(gm.perform_skill(1, "spellweaver"), "learn Spellweaver")
+	rec.spell_ready.clear()
+	me.mana = me.max_mana
+	_ready_to_act(1)
+	gm.perform_primary(1, "frost_bolt", Vector3(0, 0, -1), Vector3.ZERO)
+	check(is_equal_approx(me.max_mana - me.mana, 18.0), "Spellweaver: frost bolt costs 18 mana instead of 20")
+	check(gm.perform_skill(1, "bloodlust"), "learn Bloodlust")
+	enemy.health = enemy.max_health
+	_place(me, Vector3(-120, 0, 50), Vector3(-120, 0, 48))
+	enemy.teleport(Vector3(-120, 0, 48))
+	rec.inventory.add("iron_sword", 1)
+	me.health = 50.0
+	await _frames(3)
+	_ready_to_act(1)
+	gm.perform_primary(1, "iron_sword", Vector3(0, 0, -1), Vector3.ZERO)
+	check(is_equal_approx(me.health, 53.0), "Bloodlust: a 30-damage hit heals 3 (now %.1f)" % me.health)
+	me.health = me.max_health
+	rec.skills.clear()
+	rec.skill_points = 0
 
 	# --- Shields: block and parry ---
 	erec.inventory.add("wooden_shield")

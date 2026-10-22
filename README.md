@@ -73,12 +73,14 @@ The default port is **24565** (UDP). Open it on the host's router to play over t
 - **Unlock.** Spend gold on blueprints: war hammer, crossbow, ballista, spike trap,
   catapult, battering ram, horse saddle, health potion, and skillbooks.
 - **Magic.** Learn spells with gold and magic ore — fireball, frost bolt (slows), chain
-  lightning, heal aura, blink, earth wall — and cast them with mana. Mana regenerates;
+  lightning, heal aura, blink, earth wall, gust (knocks crowns loose), meteor, and
+  spectral warriors (summons 5 ghost knights) — and cast them with mana. Mana regenerates;
   mana potions (brewed from magic ore) top it up.
 - **Shields.** Craft a wooden or iron shield and hold right click to block hits from the
   front. Time it right as a sword lands to parry: no damage, and the attacker is stunned.
 - **Skills.** Kills earn 1 skill point and captures 3. Spend them on Toughness,
-  Swiftness, Arcane, Lumberjack, Mason (cheaper building) and Marksman.
+  Swiftness, Arcane, Lumberjack, Mason (cheaper building), Marksman, Spellweaver
+  (cheaper, faster spells) and Bloodlust (melee hits heal you).
 - **Voice chat.** Hold T to talk to everyone near you — positional 3D audio that fades
   with distance, enemies included — or Y for your whole team.
 - **Steal the crown.** Touch the enemy crown to grab it. You move slower while carrying it,

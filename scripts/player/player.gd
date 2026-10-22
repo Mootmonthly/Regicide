@@ -408,18 +408,25 @@ func _try_primary() -> void:
 	if kind == "structure":
 		_try_build(def)
 		return
+	var busy := float(def.get("cooldown", 1.0))
 	if kind == "spell":
-		if _game_mode.clock < float(_spell_ready.get(equipped, 0.0)):
+		var weave := int((_game_mode.my_stats.get("skills", {}) as Dictionary).get("spellweaver", 0))
+		var ready_at := float(_spell_ready.get(equipped, 0.0))
+		if _game_mode.clock < ready_at:
+			_hint("%s recharges in %d s." % [def["name"], ceili(ready_at - _game_mode.clock)])
+			_next_action_time = _game_mode.clock + 0.4
 			return
-		if mana < float(def["mana"]):
-			_hint("Not enough mana (%d needed)." % int(def["mana"]))
+		var cost := GameData.spell_mana(def, weave)
+		if mana < cost:
+			_hint("Not enough mana (%d needed)." % int(cost))
 			return
-		_spell_ready[equipped] = _game_mode.clock + float(def["cooldown"])
+		_spell_ready[equipped] = _game_mode.clock + GameData.spell_cooldown(def, weave)
+		busy = GameData.spell_cast_time(def)
 	if kind == "ranged" and int(_game_mode.my_inventory.get(def["ammo"], 0)) <= 0:
 		_game_mode.message_received.emit("Out of arrows! Craft more in the menu (C).")
 		_next_action_time = _game_mode.clock + 1.0
 		return
-	_next_action_time = _game_mode.clock + float(def.get("cooldown", 1.0))
+	_next_action_time = _game_mode.clock + busy
 	_game_mode.request(&"request_primary", [equipped, aim_direction(), Vector3.ZERO])
 	play_action_anim(kind)
 

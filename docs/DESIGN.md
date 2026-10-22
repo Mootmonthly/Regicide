@@ -162,12 +162,18 @@ Casting costs mana (100 max, +2.5/s; mana potions restore 60).
 | Heal Aura | 150g + 3 ore | 45 | Heals you and teammates within 9 m by 35 |
 | Earth Wall | 180g + 4 ore | 50 | Raises a stone wall in front of you for 15 s |
 | Lightning | 200g + 4 ore | 40 | 32 damage, arcs to 2 more enemies for 16 |
+| Gust | 120g + 2 ore | 30 | Throws enemies in front of you 7 m back (6 damage); knocks a stolen crown out of the carrier's hands. 8 s recharge |
+| Meteor | 260g + 5 ore | 70 | Lands where you aim after a 1.5 s warning ring: 65 damage in 6 m, 350 to structures. 20 s recharge |
+| Spectral Warriors | 300g + 6 ore | 60 | 5 ghostly sword-knights for 60 s. They hunt any enemy (players or enemy warriors) within 50 m, follow you otherwise, and can be killed (60 health, 10 damage per hit; shields block them). 60 s recharge |
+
+Each spell has its own recharge; casting only keeps your hands busy for up to 1 s.
 
 ## Skills
 
 Kills give 1 skill point, captures 3. Rank n of a skill costs n points (max rank 3).
 Toughness (+15 health), Swiftness (+6% speed), Arcane (+25 mana, +1 mana/s), Lumberjack
-(+25% gathering), Mason (-15% building cost), Marksman (+15% bow damage), per rank.
+(+25% gathering), Mason (-15% building cost), Marksman (+15% bow damage), Spellweaver
+(-10% spell mana and recharge), Bloodlust (melee hits heal 10% of the damage), per rank.
 Skills reset with the match.
 
 ## Voice chat

@@ -234,6 +234,9 @@ func _remove_player(peer: int) -> void:
 		if p.carrying_crown >= 0:
 			_drop_crown(crowns[p.carrying_crown], p.sync_pos)
 		p.queue_free()
+	for w in world.get_summons():
+		if w.owner_peer == peer:
+			remove_summon(w)
 	records.erase(peer)
 	_scoreboard_dirty = true
 
@@ -613,8 +616,10 @@ func perform_primary(peer: int, item_id: String, aim_dir: Vector3, target: Vecto
 		return false
 	if clock < rec.next_action_time:
 		return false
-	# Small tolerance for network jitter.
-	rec.next_action_time = clock + float(def.get("cooldown", 1.0)) * 0.85
+	# Small tolerance for network jitter. Spells only keep your hands busy briefly;
+	# each has its own recharge (spell_ready).
+	var busy := GameData.spell_cast_time(def) if def["kind"] == "spell" else float(def.get("cooldown", 1.0))
+	rec.next_action_time = clock + busy * 0.85
 	if aim_dir.length_squared() < 0.0001:
 		aim_dir = -p.global_basis.z
 	aim_dir = aim_dir.normalized()
@@ -667,7 +672,8 @@ func perform_skill(peer: int, skill: String) -> bool:
 func _cast_spell(rec: PlayerRecord, p: Player, id: String, def: Dictionary, aim_dir: Vector3) -> bool:
 	if clock < float(rec.spell_ready.get(id, 0.0)):
 		return false
-	var cost: float = def["mana"]
+	var weave := rec.rank("spellweaver")
+	var cost := GameData.spell_mana(def, weave)
 	if p.mana < cost:
 		_tell(rec.peer_id, "Not enough mana.")
 		return false
@@ -685,11 +691,17 @@ func _cast_spell(rec: PlayerRecord, p: Player, id: String, def: Dictionary, aim_
 			ok = _cast_blink(rec, p, def, aim_dir)
 		"earth_wall":
 			ok = _cast_earth_wall(rec, p, def, aim_dir)
+		"gust":
+			_cast_gust(rec, p, def, aim_dir)
+		"meteor":
+			_cast_meteor(rec, p, def, aim_dir)
+		"spectral_warriors":
+			ok = _cast_spectral(rec, p, def)
 		_:
 			ok = false
 	if ok:
 		p.mana = maxf(p.mana - cost, 0.0)
-		rec.spell_ready[id] = clock + float(def["cooldown"])
+		rec.spell_ready[id] = clock + GameData.spell_cooldown(def, weave)
 	return ok
 
 
@@ -809,6 +821,154 @@ func _cast_earth_wall(rec: PlayerRecord, p: Player, def: Dictionary, aim_dir: Ve
 	return true
 
 
+## Throws every enemy in a cone in front of the caster back, and knocks a stolen
+## crown out of its carrier's hands.
+func _cast_gust(rec: PlayerRecord, caster: Player, def: Dictionary, aim_dir: Vector3) -> void:
+	var origin := caster.sync_pos
+	var forward := Vector3(aim_dir.x, 0, aim_dir.z).normalized()
+	if forward == Vector3.ZERO:
+		forward = -caster.global_basis.z
+	var reach: float = def["range"]
+	world.fx_spell.rpc("gust", origin + Vector3(0, 1.2, 0), origin + Vector3(0, 1.2, 0) + forward * reach)
+	for p in world.get_players():
+		if p.team == rec.team or not p.alive:
+			continue
+		if GameData.flat_distance(origin, p.sync_pos) > reach or not _in_cone(origin, p.sync_pos, forward):
+			continue
+		if p.carrying_crown >= 0:
+			_drop_crown(crowns[p.carrying_crown], p.sync_pos)
+			_announce("%s's gust knocked the crown loose!" % rec.name)
+		var away := Vector3(p.sync_pos.x - origin.x, 0, p.sync_pos.z - origin.z)
+		away = away.normalized() if away.length() > 0.3 else forward
+		_teleport_player(p.peer_id, _slide_point(p.sync_pos, away, float(def["push"])) + Vector3(0, 0.1, 0))
+		damage_player(p.peer_id, def["damage"], rec.peer_id, "gust")
+	for w in world.get_summons():
+		if w.team != rec.team and GameData.flat_distance(origin, w.global_position) <= reach \
+				and _in_cone(origin, w.global_position, forward):
+			var away := Vector3(w.global_position.x - origin.x, 0, w.global_position.z - origin.z).normalized()
+			w.global_position = _slide_point(w.global_position, away, float(def["push"])) + Vector3(0, 0.1, 0)
+			w.sync_pos = w.position
+
+
+## How far something can be slid along the ground from `from` (stops at walls, cliffs
+## and the map edge, like Blink).
+func _slide_point(from: Vector3, dir: Vector3, distance: float) -> Vector3:
+	var dest := from
+	var travelled := 0.0
+	while travelled < distance:
+		var next := dest + dir * 0.5
+		next.y = Terrain.height(next.x, next.z)
+		if not GameData.in_bounds(next, 1.0) or next.y - dest.y > 1.5:
+			break
+		var blocked := false
+		for s in world.get_structures():
+			if not s.is_trap() and not s.is_ladder() and (s.blocks_point(next + Vector3(0, 1.0, 0)) or s.blocks_point(next + Vector3(0, 1.7, 0))):
+				blocked = true
+				break
+		if blocked:
+			break
+		dest = next
+		travelled += 0.5
+	return dest
+
+
+## A meteor lands where the caster aims after a warning; hits players, warriors and walls.
+func _cast_meteor(rec: PlayerRecord, caster: Player, def: Dictionary, aim_dir: Vector3) -> void:
+	var start := caster.sync_pos + Vector3(0, 1.5, 0)
+	var hit := _trace(start, aim_dir, def["range"], -1)
+	var impact: Vector3 = hit[0]
+	impact.y = maxf(impact.y, Terrain.height(impact.x, impact.z))
+	var radius: float = def["radius"]
+	var delay: float = def["delay"]
+	world.fx_meteor.rpc(impact, radius, delay)
+	var gen := _generation
+	var team := rec.team
+	var peer := rec.peer_id
+	get_tree().create_timer(delay, false, true).timeout.connect(func() -> void:
+		if gen != _generation or match_over:
+			return
+		for p in world.get_players():
+			if p.team != team and p.alive and (p.sync_pos + Vector3(0, 0.9, 0)).distance_to(impact) <= radius + 0.5:
+				damage_player(p.peer_id, def["damage"], peer, "meteor", impact)
+		for w in world.get_summons():
+			if w.team != team and w.chest().distance_to(impact) <= radius + 0.5:
+				damage_summon(w, def["damage"])
+		for s in world.get_structures():
+			if s.team != team and s.closest_point(impact).distance_to(impact) <= radius:
+				damage_structure(s, def["structure_damage"]))
+
+
+var _next_summon_uid := 1
+
+
+## Five ghostly warriors rise in a ring around the caster.
+func _cast_spectral(rec: PlayerRecord, caster: Player, def: Dictionary) -> bool:
+	# One pack at a time: casting again replaces the old one.
+	for w in world.get_summons():
+		if w.owner_peer == rec.peer_id:
+			remove_summon(w)
+	var count := int(def["count"])
+	for k in count:
+		var a := TAU * k / count
+		var pos := caster.sync_pos + Vector3(cos(a), 0, sin(a)) * 2.2
+		pos.y = Terrain.height(pos.x, pos.z) + 0.1
+		world.summon_spawner.spawn({
+			"uid": _next_summon_uid, "team": rec.team, "owner": rec.peer_id, "pos": pos,
+			"expires": clock + float(def["lifetime"]),
+		})
+		_next_summon_uid += 1
+	world.fx_spell.rpc("summon", caster.sync_pos + Vector3(0, 1, 0), caster.sync_pos + Vector3(2.2, 1, 0))
+	return true
+
+
+## Server: what a warrior should fight - the closest living enemy player or enemy
+## warrior within `hunt_range`.
+func summon_target(w: Summon, hunt_range: float) -> Node3D:
+	var best: Node3D = null
+	var best_d := hunt_range
+	for p in world.get_players():
+		if p.team == w.team or not p.alive:
+			continue
+		var vrec: PlayerRecord = records.get(p.peer_id)
+		if vrec and clock < vrec.protected_until:
+			continue
+		var d := w.global_position.distance_to(p.sync_pos)
+		if d < best_d:
+			best = p
+			best_d = d
+	for other in world.get_summons():
+		if other.team != w.team:
+			var d := w.global_position.distance_to(other.global_position)
+			if d < best_d:
+				best = other
+				best_d = d
+	return best
+
+
+## A warrior's sword lands. Shields block it (it can't be parried: there's no one to stun).
+func summon_hit(w: Summon, target: Node3D) -> void:
+	var dmg := float(GameData.item("spectral_warriors")["warrior_damage"])
+	if target is Player:
+		damage_player((target as Player).peer_id, dmg, w.owner_peer, "spectral warrior", w.global_position)
+	elif target is Summon:
+		damage_summon(target as Summon, dmg)
+
+
+func damage_summon(w: Summon, amount: float) -> void:
+	if w.is_queued_for_deletion():
+		return
+	w.health -= amount
+	if w.health <= 0.0:
+		remove_summon(w)
+
+
+func remove_summon(w: Summon) -> void:
+	if w.is_queued_for_deletion():
+		return
+	w.vanish_fx.rpc()
+	w.queue_free()  # the spawner removes it on every client
+
+
 ## A summoned piece's time is up.
 func expire_structure(s: Structure) -> void:
 	if not s.is_queued_for_deletion():
@@ -848,6 +1008,13 @@ func _melee(rec: PlayerRecord, attacker: Player, def: Dictionary, aim_dir: Vecto
 		if d <= reach and d < best_d and _in_cone(origin, cp, forward):
 			best = s
 			best_d = d
+	for w in world.get_summons():
+		if w.team == rec.team:
+			continue
+		var d := GameData.flat_distance(origin, w.global_position) - 0.4
+		if d <= reach and d < best_d and _in_cone(origin, w.global_position, forward):
+			best = w
+			best_d = d
 	for r in world.resource_nodes:
 		if r.amount <= 0:
 			continue
@@ -857,11 +1024,24 @@ func _melee(rec: PlayerRecord, attacker: Player, def: Dictionary, aim_dir: Vecto
 			best_d = d
 
 	if best is Player:
-		damage_player(best.peer_id, def["damage"], rec.peer_id, "", attacker.sync_pos, true)
+		var victim := best as Player
+		var before := victim.health
+		damage_player(victim.peer_id, def["damage"], rec.peer_id, "", attacker.sync_pos, true)
+		_bloodlust(rec, attacker, before - victim.health)
+	elif best is Summon:
+		damage_summon(best as Summon, def["damage"])
+		_bloodlust(rec, attacker, float(def["damage"]))
 	elif best is Structure:
 		damage_structure(best, def.get("structure_damage", 1.0))
 	elif best is ResourceNode:
 		_gather(rec, best, def)
+
+
+## Bloodlust skill: melee damage dealt heals the attacker a little.
+func _bloodlust(rec: PlayerRecord, attacker: Player, dealt: float) -> void:
+	var r := rec.rank("bloodlust")
+	if r > 0 and dealt > 0.0 and attacker.alive:
+		attacker.health = minf(attacker.max_health, attacker.health + dealt * 0.1 * r)
 
 
 func _in_cone(origin: Vector3, point: Vector3, forward: Vector3) -> bool:
@@ -915,10 +1095,16 @@ func _shoot(rec: PlayerRecord, shooter: Player, def: Dictionary, aim_dir: Vector
 		if r.amount > 0 and r.res_type == "wood" and _near_segment(r.global_position, start, corridor_end, 3.0):
 			nodes.append(r)
 
+	var warriors: Array[Summon] = []
+	for w in world.get_summons():
+		if w.team != rec.team and _near_segment(w.global_position, start, corridor_end, 4.0):
+			warriors.append(w)
+
 	var dt := 1.0 / 60.0
 	var t := 0.0
 	var pos := start
 	var hit_player: Player = null
+	var hit_warrior: Summon = null
 	var hit_structure: Structure = null
 	while t < max_time:
 		t += dt
@@ -933,6 +1119,14 @@ func _shoot(rec: PlayerRecord, shooter: Player, def: Dictionary, aim_dir: Vector
 			var body := p.sync_pos + Vector3(0, 0.9, 0)
 			if GameData.flat_distance(pos, body) < 0.55 and absf(pos.y - body.y) < 1.0:
 				hit_player = p
+				done = true
+				break
+		if done:
+			break
+		for w in warriors:
+			var body := w.global_position + Vector3(0, 0.9, 0)
+			if GameData.flat_distance(pos, body) < 0.55 and absf(pos.y - body.y) < 1.0:
+				hit_warrior = w
 				done = true
 				break
 		if done:
@@ -954,6 +1148,8 @@ func _shoot(rec: PlayerRecord, shooter: Player, def: Dictionary, aim_dir: Vector
 	if hit_player:
 		var dmg := float(def["damage"]) * (1.0 + 0.15 * rec.rank("marksman"))
 		damage_player(hit_player.peer_id, dmg, rec.peer_id, "", start)
+	elif hit_warrior:
+		damage_summon(hit_warrior, float(def["damage"]) * (1.0 + 0.15 * rec.rank("marksman")))
 	elif hit_structure and hit_structure.team != rec.team:
 		damage_structure(hit_structure, def.get("structure_damage", 1.0))
 	return true
@@ -1130,6 +1326,9 @@ func _fire_catapult(rec: PlayerRecord, cat: Structure, aim_dir: Vector3) -> bool
 	for p in world.get_players():
 		if p.team != rec.team and p.alive and (p.sync_pos + Vector3(0, 0.9, 0)).distance_to(pos) <= radius:
 			damage_player(p.peer_id, cfg["damage"], rec.peer_id, "catapult")
+	for w in world.get_summons():
+		if w.team != rec.team and w.chest().distance_to(pos) <= radius:
+			damage_summon(w, cfg["damage"])
 	for s in world.get_structures():
 		if s.team != rec.team and s.closest_point(pos).distance_to(pos) <= radius:
 			damage_structure(s, cfg["structure_damage"])
@@ -1216,6 +1415,9 @@ func _cast_fireball(rec: PlayerRecord, caster: Player, def: Dictionary, aim_dir:
 	for p in world.get_players():
 		if p.team != rec.team and p.alive and (p.sync_pos + Vector3(0, 0.9, 0)).distance_to(impact) <= radius:
 			damage_player(p.peer_id, def["damage"], rec.peer_id, "fireball", impact)
+	for w in world.get_summons():
+		if w.team != rec.team and w.chest().distance_to(impact) <= radius:
+			damage_summon(w, def["damage"])
 	for s in world.get_structures():
 		if s.team != rec.team and s.closest_point(impact).distance_to(impact) <= radius:
 			damage_structure(s, def["structure_damage"])
@@ -1436,6 +1638,8 @@ func _reset_match() -> void:
 		c.send_home()
 	for s in world.get_structures():
 		s.queue_free()
+	for w in world.get_summons():
+		w.queue_free()
 	world.reset_resources()
 	for rec: PlayerRecord in records.values():
 		rec.reset_progress()

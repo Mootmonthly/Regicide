@@ -373,6 +373,28 @@ const ITEMS := {
 		"color": Color(0.5, 0.4, 0.28),
 		"desc": "Raise a temporary stone wall in front of you for 15 s.",
 	},
+	"gust": {
+		"name": "Gust", "kind": "spell", "unlock_cost": 120, "learn": {"magic_ore": 2}, "recipe": {},
+		"mana": 30.0, "cooldown": 8.0,
+		"range": 9.0, "push": 7.0, "damage": 6.0,
+		"color": Color(0.85, 0.95, 1.0),
+		"desc": "A blast of wind throws enemies in front of you 7 m back. Knocks a stolen crown out of the carrier's hands.",
+	},
+	"meteor": {
+		"name": "Meteor", "kind": "spell", "unlock_cost": 260, "learn": {"magic_ore": 5}, "recipe": {},
+		"mana": 70.0, "cooldown": 20.0,
+		"range": 55.0, "delay": 1.5, "radius": 6.0, "damage": 65.0, "structure_damage": 350.0,
+		"color": Color(1.0, 0.35, 0.1),
+		"desc": "Calls a meteor down where you aim. A glowing ring warns everyone for 1.5 s, then it smashes players and walls.",
+	},
+	"spectral_warriors": {
+		"name": "Spectral Warriors", "kind": "spell", "unlock_cost": 300, "learn": {"magic_ore": 6}, "recipe": {},
+		"mana": 60.0, "cooldown": 60.0,
+		"count": 5, "lifetime": 60.0, "hunt_range": 50.0,
+		"warrior_health": 60.0, "warrior_damage": 10.0, "warrior_attack_interval": 1.1,
+		"color": Color(0.6, 0.8, 1.0),
+		"desc": "Summons 5 ghostly sword-knights for 60 s. They hunt any enemy within 50 m and follow you otherwise. Enemies can cut them down.",
+	},
 	# What Earth Wall summons (not buildable directly).
 	"earth_wall_piece": {
 		"name": "Earth Wall", "kind": "structure", "piece": "wall", "category": "", "unlock_cost": 0,
@@ -391,6 +413,8 @@ const SKILLS := {
 	"lumberjack": {"name": "Lumberjack", "max_rank": 3, "desc": "+25% resources from every hit per rank."},
 	"mason": {"name": "Mason", "max_rank": 3, "desc": "Building pieces cost 15% less per rank."},
 	"marksman": {"name": "Marksman", "max_rank": 3, "desc": "+15% bow and crossbow damage per rank."},
+	"spellweaver": {"name": "Spellweaver", "max_rank": 3, "desc": "Spells cost 10% less mana and recharge 10% faster per rank."},
+	"bloodlust": {"name": "Bloodlust", "max_rank": 3, "desc": "Melee hits on enemies heal you for 10% of the damage per rank."},
 }
 
 const ITEM_KINDS := ["tool", "weapon", "ranged", "ammo", "shield", "structure", "consumable", "spell"]
@@ -418,6 +442,20 @@ static func gate_layer(team: int) -> int:
 ## Learning cost for a spell / unlock cost for a blueprint: gold plus any materials.
 static func learn_materials(id: String) -> Dictionary:
 	return item(id).get("learn", {})
+
+
+## A spell's mana cost and cooldown after the Spellweaver skill.
+static func spell_mana(def: Dictionary, spellweaver_rank: int) -> float:
+	return float(def["mana"]) * (1.0 - 0.1 * spellweaver_rank)
+
+
+static func spell_cooldown(def: Dictionary, spellweaver_rank: int) -> float:
+	return float(def["cooldown"]) * (1.0 - 0.1 * spellweaver_rank)
+
+
+## How long casting a spell keeps your hands busy (its own recharge is separate).
+static func spell_cast_time(def: Dictionary) -> float:
+	return minf(float(def["cooldown"]), 1.0)
 
 
 static func skill_cost(rank_now: int) -> int:

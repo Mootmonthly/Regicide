@@ -474,7 +474,7 @@ func _rebuild_hotbar() -> void:
 			if not _can_afford(recipe):
 				style.bg_color = Color(0.3, 0.05, 0.05, 0.75)
 		elif def.get("kind", "") == "spell":
-			text += "\n%d mana" % int(def["mana"])
+			text += "\n%d mana" % int(GameData.spell_mana(def, _skill_rank("spellweaver")))
 			style.bg_color = Color(0.08, 0.08, 0.2, 0.8)
 		elif count > 1:
 			text += " x%d" % count
@@ -550,7 +550,7 @@ func _rebuild_menu() -> void:
 		var have := ("  (have %d)" % int(_game_mode.my_inventory.get(id, 0))) if not kind in ["structure", "spell"] else ""
 		var cost_line := "Cost: %s%s" % [GameData.cost_text(def["recipe"]), makes]
 		if kind == "spell":
-			cost_line = "%d mana · %.1f s cooldown" % [int(def["mana"]), float(def["cooldown"])]
+			cost_line = "%d mana · %s s cooldown" % [int(GameData.spell_mana(def, _skill_rank("spellweaver"))), str(snappedf(GameData.spell_cooldown(def, _skill_rank("spellweaver")), 0.1))]
 		elif kind == "structure":
 			cost_line = "Cost: %s" % GameData.cost_text(GameData.build_cost(def["recipe"], _skill_rank("mason")))
 		var info := _label("%s%s\n%s\n%s" % [def["name"], have, def.get("desc", ""), cost_line], 14)
