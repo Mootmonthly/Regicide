@@ -395,6 +395,41 @@ const ITEMS := {
 		"color": Color(0.6, 0.8, 1.0),
 		"desc": "Summons 5 ghostly sword-knights for 60 s. They hunt any enemy within 50 m and follow you otherwise. Enemies can cut them down.",
 	},
+	"thunderclap": {
+		"name": "Thunderclap", "kind": "spell", "unlock_cost": 180, "learn": {"magic_ore": 3}, "recipe": {},
+		"mana": 40.0, "cooldown": 12.0,
+		"radius": 5.0, "damage": 10.0, "stun": 1.5,
+		"color": Color(1.0, 0.9, 0.4),
+		"desc": "Slam the ground: enemies within 5 m take 10 damage and are stunned for 1.5 s.",
+	},
+	"siphon_life": {
+		"name": "Siphon Life", "kind": "spell", "unlock_cost": 160, "learn": {"magic_ore": 3}, "recipe": {},
+		"mana": 35.0, "cooldown": 5.0,
+		"range": 30.0, "damage": 22.0,
+		"color": Color(0.75, 0.2, 0.45),
+		"desc": "Drain the enemy you aim at: 22 damage, and you heal by as much as you took.",
+	},
+	"battle_cry": {
+		"name": "Battle Cry", "kind": "spell", "unlock_cost": 220, "learn": {"magic_ore": 4}, "recipe": {},
+		"mana": 50.0, "cooldown": 30.0,
+		"radius": 12.0, "duration": 8.0, "speed": 1.25, "damage_mult": 1.2,
+		"color": Color(1.0, 0.75, 0.25),
+		"desc": "You and every teammate within 12 m move 25% faster and deal 20% more damage for 8 s.",
+	},
+	"shadow_cloak": {
+		"name": "Shadow Cloak", "kind": "spell", "unlock_cost": 200, "learn": {"magic_ore": 4}, "recipe": {},
+		"mana": 45.0, "cooldown": 25.0,
+		"duration": 10.0,
+		"color": Color(0.35, 0.3, 0.5),
+		"desc": "Turn invisible to enemies for 10 s. Attacking, casting or grabbing a crown reveals you.",
+	},
+	"arcane_ward": {
+		"name": "Arcane Ward", "kind": "spell", "unlock_cost": 150, "learn": {"magic_ore": 3}, "recipe": {},
+		"mana": 40.0, "cooldown": 20.0,
+		"absorb": 40.0, "duration": 12.0,
+		"color": Color(0.5, 0.7, 1.0),
+		"desc": "A shimmering bubble soaks up the next 40 damage you take (lasts 12 s).",
+	},
 	# What Earth Wall summons (not buildable directly).
 	"earth_wall_piece": {
 		"name": "Earth Wall", "kind": "structure", "piece": "wall", "category": "", "unlock_cost": 0,
@@ -415,6 +450,9 @@ const SKILLS := {
 	"marksman": {"name": "Marksman", "max_rank": 3, "desc": "+15% bow and crossbow damage per rank."},
 	"spellweaver": {"name": "Spellweaver", "max_rank": 3, "desc": "Spells cost 10% less mana and recharge 10% faster per rank."},
 	"bloodlust": {"name": "Bloodlust", "max_rank": 3, "desc": "Melee hits on enemies heal you for 10% of the damage per rank."},
+	"iron_will": {"name": "Iron Will", "max_rank": 3, "desc": "Stuns and slows on you wear off 25% sooner per rank."},
+	"bounty_hunter": {"name": "Bounty Hunter", "max_rank": 3, "desc": "+15 gold per kill per rank."},
+	"horsemanship": {"name": "Horsemanship", "max_rank": 3, "desc": "+8% riding speed per rank."},
 }
 
 const ITEM_KINDS := ["tool", "weapon", "ranged", "ammo", "shield", "structure", "consumable", "spell"]

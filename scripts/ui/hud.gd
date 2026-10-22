@@ -367,10 +367,17 @@ func _process(_delta: float) -> void:
 			_center.text = "Stunned!"
 		elif me.carrying_crown >= 0:
 			_center.text = "You carry the %s crown! Bring it to your pedestal." % GameData.team_name(me.carrying_crown)
-		elif me.slowed:
-			_center.text = "Slowed"
 		else:
-			_center.text = ""
+			var tags: Array[String] = []
+			if me.slowed:
+				tags.append("Slowed")
+			if me.cloaked:
+				tags.append("Cloaked: enemies can't see you")
+			if me.rallied:
+				tags.append("Battle Cry!")
+			if me.warded:
+				tags.append("Warded")
+			_center.text = "  ·  ".join(tags)
 		if me.build_page != _hotbar_page:
 			_rebuild_hotbar()
 		_mode_label.text = _mode_text(me)

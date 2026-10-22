@@ -166,6 +166,12 @@ Casting costs mana (100 max, +2.5/s; mana potions restore 60).
 | Meteor | 260g + 5 ore | 70 | Lands where you aim after a 1.5 s warning ring: 65 damage in 6 m, 350 to structures. 20 s recharge |
 | Spectral Warriors | 300g + 6 ore | 60 | 5 ghostly sword-knights for 60 s. They hunt any enemy (players or enemy warriors) within 50 m, follow you otherwise, and can be killed (60 health, 10 damage per hit; shields block them). Test bots fight them too. 60 s recharge |
 
+| Thunderclap | 180g + 3 ore | 40 | Enemies within 5 m take 10 damage and are stunned for 1.5 s. 12 s recharge |
+| Siphon Life | 160g + 3 ore | 35 | 22 damage to the enemy you aim at; you heal as much as they lost. 5 s recharge |
+| Battle Cry | 220g + 4 ore | 50 | You and teammates within 12 m: +25% speed, +20% damage for 8 s. 30 s recharge |
+| Shadow Cloak | 200g + 4 ore | 45 | Invisible to enemies (and their bots, ballistas and warriors) for 10 s; allies see a faint shape. Attacking, casting or grabbing a crown reveals you; can't be cast while carrying one. 25 s recharge |
+| Arcane Ward | 150g + 3 ore | 40 | A bubble soaks up the next 40 damage (lasts 12 s). 20 s recharge |
+
 Each spell has its own recharge; casting only keeps your hands busy for up to 1 s.
 
 ## Skills
@@ -173,7 +179,9 @@ Each spell has its own recharge; casting only keeps your hands busy for up to 1 
 Kills give 1 skill point, captures 3. Rank n of a skill costs n points (max rank 3).
 Toughness (+15 health), Swiftness (+6% speed), Arcane (+25 mana, +1 mana/s), Lumberjack
 (+25% gathering), Mason (-15% building cost), Marksman (+15% bow damage), Spellweaver
-(-10% spell mana and recharge), Bloodlust (melee hits heal 10% of the damage), per rank.
+(-10% spell mana and recharge), Bloodlust (melee hits heal 10% of the damage), Iron Will
+(stuns and slows on you 25% shorter), Bounty Hunter (+15 gold per kill), Horsemanship
+(+8% riding speed), per rank.
 Skills reset with the match.
 
 ## Voice chat

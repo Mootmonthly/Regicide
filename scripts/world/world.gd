@@ -514,6 +514,32 @@ func fx_spell(kind: String, from: Vector3, to: Vector3) -> void:
 				var start := from + Vector3(0, randf_range(-0.6, 0.5), 0) + d * 0.8
 				_projectile(streak, start, start + d * reach, 30.0)
 			Sfx.play_at("blink", from, 2.0)
+		"thunderclap", "battle_cry":
+			var radius := from.distance_to(to)
+			var color := Color(1.0, 0.9, 0.4) if kind == "thunderclap" else Color(1.0, 0.7, 0.2)
+			_shockwave(from + Vector3(0, 0.3, 0), radius, color, 0.3 if kind == "thunderclap" else 0.6)
+			if kind == "thunderclap":
+				debris(from + Vector3(0, 0.3, 0), Color(0.45, 0.38, 0.3), 16)
+				Sfx.play_at("boom", from, 2.0)
+			else:
+				Sfx.play_at("heal", from, 4.0)
+		"siphon":
+			# Crimson motes stream from the victim back into the caster.
+			for k in 5:
+				var orb := SphereMesh.new()
+				orb.radius = 0.12
+				orb.height = 0.24
+				var mi := Visuals.mesh_instance(orb, Color(0.8, 0.15, 0.4), Vector3.ZERO, 3.0)
+				var jitter := Vector3(randf_range(-0.4, 0.4), randf_range(-0.3, 0.3), randf_range(-0.4, 0.4))
+				get_tree().create_timer(k * 0.06).timeout.connect(func() -> void:
+					_projectile(mi, from + jitter, to, 28.0))
+			Sfx.play_at("frost", from, -2.0)
+		"cloak":
+			debris(from, Color(0.3, 0.25, 0.45), 14)
+			Sfx.play_at("blink", from, -4.0)
+		"ward", "ward_break":
+			debris(from, Color(0.5, 0.7, 1.0), 10 if kind == "ward" else 18)
+			Sfx.play_at("block" if kind == "ward_break" else "heal", from)
 		"summon":
 			var radius := from.distance_to(to)
 			for k in 5:
@@ -664,6 +690,26 @@ func fx_fireball(from: Vector3, to: Vector3, radius: float) -> void:
 	t.tween_property(boom, "scale", Vector3.ONE * radius, 0.35)
 	t.tween_property(mat, "albedo_color:a", 0.0, 0.35)
 	t.chain().tween_callback(boom.queue_free)
+
+
+## An expanding flat ring (thunderclap, battle cry).
+func _shockwave(at: Vector3, radius: float, color: Color, seconds: float) -> void:
+	var ring := TorusMesh.new()
+	ring.inner_radius = 0.85
+	ring.outer_radius = 1.0
+	var mat := Visuals.mat(Color(color.r, color.g, color.b, 0.8), 2.5).duplicate() as StandardMaterial3D
+	mat.transparency = BaseMaterial3D.TRANSPARENCY_ALPHA
+	var mi := MeshInstance3D.new()
+	mi.mesh = ring
+	mi.material_override = mat
+	mi.cast_shadow = GeometryInstance3D.SHADOW_CASTING_SETTING_OFF
+	fx_root.add_child(mi)
+	mi.global_position = at
+	mi.scale = Vector3(0.3, 1.0, 0.3)
+	var t := mi.create_tween().set_parallel()
+	t.tween_property(mi, "scale", Vector3(radius, 1.0, radius), seconds)
+	t.tween_property(mat, "albedo_color:a", 0.0, seconds * 1.4)
+	t.chain().tween_callback(mi.queue_free)
 
 
 ## A warning ring where a meteor will land, then the meteor itself and the blast.

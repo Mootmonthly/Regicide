@@ -53,6 +53,24 @@ var max_mana := GameData.PLAYER_MAX_MANA
 var mana := GameData.PLAYER_MAX_MANA
 var slowed := false
 var stunned := false
+## Battle Cry: faster and harder-hitting for a while.
+var rallied := false:
+	set(value):
+		rallied = value
+		if is_node_ready():
+			_refresh_status_fx()
+## Shadow Cloak: hidden from enemies (allies see a faint shape).
+var cloaked := false:
+	set(value):
+		cloaked = value
+		if is_node_ready():
+			_refresh_status_fx()
+## Arcane Ward: a bubble that soaks up damage.
+var warded := false:
+	set(value):
+		warded = value
+		if is_node_ready():
+			_refresh_status_fx()
 var carrying_crown := -1
 var mounted := false:
 	set(value):
@@ -137,6 +155,10 @@ var _vm_shield: Node3D
 var _shield_mesh: Node3D
 var _spell_ready: Dictionary = {}
 var _speaking_label: Label3D
+var _name_label: Label3D
+var _ward_bubble: MeshInstance3D
+var _rally_ring: MeshInstance3D
+var _cloak_shown := -1  ## 0 visible, 1 faint (ally), 2 hidden (enemy); -1 not set
 
 static var _flash_material: StandardMaterial3D
 
@@ -198,9 +220,13 @@ func current_speed(sprinting: bool) -> float:
 		mult *= 0.5
 	if slowed:
 		mult *= GameData.SLOW_MULT
+	if rallied:
+		mult *= float(GameData.item("battle_cry")["speed"])
 	if is_local() and _game_mode:
 		var skills: Dictionary = _game_mode.my_stats.get("skills", {})
 		mult *= 1.0 + 0.06 * int(skills.get("swiftness", 0))
+		if mounted:
+			mult *= 1.0 + 0.08 * int(skills.get("horsemanship", 0))
 	if in_water():
 		# Wading: no sprinting, and horses don't help.
 		return WALK_SPEED * WADE_MULT * (CROWN_CARRY_MULT if carrying_crown >= 0 else 1.0) * mult
@@ -209,6 +235,84 @@ func current_speed(sprinting: bool) -> float:
 	if mounted:
 		return speed * MOUNT_MULT * mult
 	return speed * mult
+
+
+## Ward bubble, battle-cry ring, and cloak (hidden from enemies, faint to allies).
+func _refresh_status_fx() -> void:
+	if _body == null or Net.is_dedicated():
+		return
+	if warded and _ward_bubble == null:
+		var sphere := SphereMesh.new()
+		sphere.radius = 1.05
+		sphere.height = 2.1
+		var mat := StandardMaterial3D.new()
+		mat.shading_mode = BaseMaterial3D.SHADING_MODE_UNSHADED
+		mat.transparency = BaseMaterial3D.TRANSPARENCY_ALPHA
+		mat.blend_mode = BaseMaterial3D.BLEND_MODE_ADD
+		mat.albedo_color = Color(0.4, 0.6, 1.0, 0.18)
+		mat.cull_mode = BaseMaterial3D.CULL_DISABLED
+		_ward_bubble = MeshInstance3D.new()
+		_ward_bubble.mesh = sphere
+		_ward_bubble.material_override = mat
+		_ward_bubble.cast_shadow = GeometryInstance3D.SHADOW_CASTING_SETTING_OFF
+		_ward_bubble.position.y = 0.95
+		_body.add_child(_ward_bubble)
+		if is_local():
+			_set_layer(_ward_bubble, BODY_LAYER)
+	if _ward_bubble:
+		_ward_bubble.visible = warded
+	if rallied and _rally_ring == null:
+		var ring := TorusMesh.new()
+		ring.inner_radius = 0.55
+		ring.outer_radius = 0.7
+		_rally_ring = Visuals.mesh_instance(ring, Color(1.0, 0.75, 0.25), Vector3(0, 0.08, 0), 2.5)
+		_rally_ring.cast_shadow = GeometryInstance3D.SHADOW_CASTING_SETTING_OFF
+		_body.add_child(_rally_ring)
+	if _rally_ring:
+		_rally_ring.visible = rallied
+	_update_cloak()
+
+
+func _update_cloak() -> void:
+	var me := _world.local_player() if _world else null
+	var want := 0
+	if cloaked:
+		want = 1 if me == null or me.team == team else 2
+	if want == _cloak_shown:
+		return
+	_cloak_shown = want
+	_body.visible = want != 2
+	if _horse:
+		_horse.visible = mounted and want != 2
+	_set_faint(want == 1)
+
+
+## Allies see a cloaked teammate as a faint, see-through shape.
+func _set_faint(on: bool) -> void:
+	for n in _body.find_children("*", "MeshInstance3D", true, false):
+		var mi := n as MeshInstance3D
+		if mi.mesh == null or mi == _ward_bubble or mi == _rally_ring:
+			continue
+		if on:
+			if mi.has_meta("unfaint"):
+				continue
+			var saved := []
+			for i in mi.mesh.get_surface_count():
+				saved.append(mi.get_surface_override_material(i))
+				var m := mi.get_active_material(i)
+				if m is BaseMaterial3D:
+					var faint := (m as BaseMaterial3D).duplicate() as BaseMaterial3D
+					faint.transparency = BaseMaterial3D.TRANSPARENCY_ALPHA
+					faint.albedo_color.a = 0.25
+					mi.set_surface_override_material(i, faint)
+			mi.set_meta("unfaint", saved)
+			mi.cast_shadow = GeometryInstance3D.SHADOW_CASTING_SETTING_OFF
+		elif mi.has_meta("unfaint"):
+			var saved: Array = mi.get_meta("unfaint")
+			for i in mini(saved.size(), mi.mesh.get_surface_count()):
+				mi.set_surface_override_material(i, saved[i])
+			mi.remove_meta("unfaint")
+			mi.cast_shadow = GeometryInstance3D.SHADOW_CASTING_SETTING_ON
 
 
 ## Show the "talking" marker over this player (voice chat).
@@ -224,6 +328,8 @@ func chest() -> Vector3:
 # --- Simulation ------------------------------------------------------------------
 
 func _physics_process(delta: float) -> void:
+	if cloaked or _cloak_shown > 0:
+		_update_cloak()  # who can see us depends on the viewer's team
 	if _look and delta > 0.0:
 		# Animate from how fast we're actually moving (works for remote players too).
 		var moved := (position - _last_anim_pos) / delta
@@ -569,6 +675,7 @@ func _build_visuals() -> void:
 	(_look.left_hand if _look.left_hand else _body).add_child(_shield_mesh)
 
 	var label := Label3D.new()
+	_name_label = label
 	label.text = display_name
 	label.billboard = BaseMaterial3D.BILLBOARD_ENABLED
 	label.font_size = 40
@@ -596,6 +703,7 @@ func _build_visuals() -> void:
 	_refresh_weapon()
 	_refresh_mount()
 	_refresh_shield()
+	_refresh_status_fx()
 	visible = alive
 	if is_local():
 		_set_layer(_body, BODY_LAYER)  # your own body is hidden in first person

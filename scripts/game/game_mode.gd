@@ -618,6 +618,8 @@ func perform_primary(peer: int, item_id: String, aim_dir: Vector3, target: Vecto
 		return false
 	# Small tolerance for network jitter. Spells only keep your hands busy briefly;
 	# each has its own recharge (spell_ready).
+	if p.cloaked and item_id != "shadow_cloak":
+		_uncloak(rec, p)  # acting gives you away
 	var busy := GameData.spell_cast_time(def) if def["kind"] == "spell" else float(def.get("cooldown", 1.0))
 	rec.next_action_time = clock + busy * 0.85
 	if aim_dir.length_squared() < 0.0001:
@@ -697,6 +699,19 @@ func _cast_spell(rec: PlayerRecord, p: Player, id: String, def: Dictionary, aim_
 			_cast_meteor(rec, p, def, aim_dir)
 		"spectral_warriors":
 			ok = _cast_spectral(rec, p, def)
+		"thunderclap":
+			_cast_thunderclap(rec, p, def)
+		"siphon_life":
+			_cast_siphon(rec, p, def, aim_dir)
+		"battle_cry":
+			_cast_battle_cry(rec, p, def)
+		"shadow_cloak":
+			ok = _cast_cloak(rec, p, def)
+		"arcane_ward":
+			rec.ward_amount = float(def["absorb"])
+			rec.ward_until = clock + float(def["duration"])
+			p.warded = true
+			world.fx_spell.rpc("ward", p.chest(), p.chest())
 		_:
 			ok = false
 	if ok:
@@ -737,7 +752,7 @@ func _cast_frost(rec: PlayerRecord, caster: Player, def: Dictionary, aim_dir: Ve
 		damage_player(victim.peer_id, def["damage"], rec.peer_id, "frost bolt", start)
 		var vrec: PlayerRecord = records.get(victim.peer_id)
 		if vrec and victim.alive:
-			vrec.slow_until = clock + float(def["slow"])
+			vrec.slow_until = clock + vrec.status_duration(float(def["slow"]))
 			victim.slowed = true
 
 
@@ -898,6 +913,68 @@ func _cast_meteor(rec: PlayerRecord, caster: Player, def: Dictionary, aim_dir: V
 				damage_structure(s, def["structure_damage"]))
 
 
+## Enemies around the caster are knocked senseless.
+func _cast_thunderclap(rec: PlayerRecord, caster: Player, def: Dictionary) -> void:
+	var radius: float = def["radius"]
+	world.fx_spell.rpc("thunderclap", caster.sync_pos, caster.sync_pos + Vector3(radius, 0, 0))
+	for p in world.get_players():
+		if p.team == rec.team or not p.alive or p.sync_pos.distance_to(caster.sync_pos) > radius:
+			continue
+		damage_player(p.peer_id, def["damage"], rec.peer_id, "thunderclap")
+		var vrec: PlayerRecord = records.get(p.peer_id)
+		if vrec and p.alive:
+			p.stunned = true
+			vrec.stun_until = maxf(vrec.stun_until, clock + vrec.status_duration(float(def["stun"])))
+			vrec.next_action_time = maxf(vrec.next_action_time, vrec.stun_until)
+	for w in world.get_summons():
+		if w.team != rec.team and w.global_position.distance_to(caster.sync_pos) <= radius:
+			damage_summon(w, def["damage"])
+
+
+## Drain the enemy in your sights and heal by what they lost.
+func _cast_siphon(rec: PlayerRecord, caster: Player, def: Dictionary, aim_dir: Vector3) -> void:
+	var start := caster.sync_pos + Vector3(0, 1.5, 0)
+	var hit := _trace(start, aim_dir, def["range"], 1 - rec.team)
+	var victim: Player = hit[1]
+	world.fx_spell.rpc("siphon", hit[0], start)
+	if victim == null:
+		return
+	var before := victim.health
+	damage_player(victim.peer_id, def["damage"], rec.peer_id, "siphon life", start)
+	if caster.alive:
+		caster.health = minf(caster.max_health, caster.health + (before - victim.health))
+
+
+func _cast_battle_cry(rec: PlayerRecord, caster: Player, def: Dictionary) -> void:
+	var radius: float = def["radius"]
+	world.fx_spell.rpc("battle_cry", caster.sync_pos, caster.sync_pos + Vector3(radius, 0, 0))
+	for p in world.get_players():
+		if p.team == rec.team and p.alive and p.sync_pos.distance_to(caster.sync_pos) <= radius:
+			var prec: PlayerRecord = records.get(p.peer_id)
+			if prec:
+				prec.rally_until = clock + float(def["duration"])
+				p.rallied = true
+
+
+func _cast_cloak(rec: PlayerRecord, p: Player, def: Dictionary) -> bool:
+	if p.carrying_crown >= 0:
+		_tell(rec.peer_id, "You can't hide while carrying a crown.")
+		return false
+	rec.cloak_until = clock + float(def["duration"])
+	p.cloaked = true
+	world.fx_spell.rpc("cloak", p.chest(), p.chest())
+	return true
+
+
+func _uncloak(rec: PlayerRecord, p: Player) -> void:
+	if not p.cloaked:
+		return
+	p.cloaked = false
+	if rec:
+		rec.cloak_until = 0.0
+	world.fx_spell.rpc("cloak", p.chest(), p.chest())
+
+
 var _next_summon_uid := 1
 
 
@@ -927,7 +1004,7 @@ func summon_target(w: Summon, hunt_range: float) -> Node3D:
 	var best: Node3D = null
 	var best_d := hunt_range
 	for p in world.get_players():
-		if p.team == w.team or not p.alive:
+		if p.team == w.team or not p.alive or p.cloaked:
 			continue
 		var vrec: PlayerRecord = records.get(p.peer_id)
 		if vrec and clock < vrec.protected_until:
@@ -1177,6 +1254,18 @@ func damage_player(victim_peer: int, amount: float, attacker_peer: int, cause :=
 			return
 		amount *= 1.0 - float(GameData.item(vrec.shield())["block"])
 		world.fx_block.rpc(victim.chest(), false)
+	var attacker := world.get_player(attacker_peer)
+	if attacker and attacker.rallied and attacker_peer != victim_peer:
+		amount *= float(GameData.item("battle_cry")["damage_mult"])
+	if vrec and victim.warded and vrec.ward_amount > 0.0:
+		var soaked := minf(amount, vrec.ward_amount)
+		vrec.ward_amount -= soaked
+		amount -= soaked
+		if vrec.ward_amount <= 0.0:
+			victim.warded = false
+			world.fx_spell.rpc("ward_break", victim.chest(), victim.chest())
+		if amount <= 0.0:
+			return
 	victim.health = maxf(victim.health - amount, 0.0)
 	var killed := victim.health <= 0.0
 	if attacker_peer != victim_peer:
@@ -1202,7 +1291,7 @@ func _parry(victim: Player, attacker_peer: int) -> void:
 	var arec: PlayerRecord = records.get(attacker_peer)
 	if attacker and arec:
 		attacker.stunned = true
-		arec.stun_until = clock + GameData.PARRY_STUN
+		arec.stun_until = clock + arec.status_duration(GameData.PARRY_STUN)
 		arec.next_action_time = maxf(arec.next_action_time, arec.stun_until)
 	_tell(victim.peer_id, "Parried!")
 	_tell(attacker_peer, "Your attack was parried!")
@@ -1224,6 +1313,9 @@ func _kill(victim: Player, killer_peer: int, cause: String) -> void:
 	victim.mounted = false
 	victim.slowed = false
 	victim.stunned = false
+	victim.rallied = false
+	victim.cloaked = false
+	victim.warded = false
 	if victim.carrying_crown >= 0:
 		_drop_crown(crowns[victim.carrying_crown], victim.sync_pos)
 	var vrec: PlayerRecord = records.get(victim.peer_id)
@@ -1233,7 +1325,7 @@ func _kill(victim: Player, killer_peer: int, cause: String) -> void:
 	var krec: PlayerRecord = records.get(killer_peer)
 	if krec and killer_peer != victim.peer_id:
 		krec.kills += 1
-		krec.gold += GameData.GOLD_PER_KILL
+		krec.gold += GameData.GOLD_PER_KILL + 15 * krec.rank("bounty_hunter")
 		krec.skill_points += GameData.SKILL_POINTS_PER_KILL
 		_push_private(killer_peer)
 		var how := ("'s %s" % cause) if cause != "" else ""
@@ -1268,7 +1360,7 @@ func nearest_enemy(pos: Vector3, team: int, max_range: float) -> Player:
 	var best: Player = null
 	var best_d := max_range
 	for p in world.get_players():
-		if p.team == team or not p.alive:
+		if p.team == team or not p.alive or p.cloaked:
 			continue
 		var d := pos.distance_to(p.sync_pos)
 		if d <= best_d:
@@ -1507,6 +1599,13 @@ func _tick_status(delta: float) -> void:
 			p.slowed = false
 		if p.stunned and clock >= rec.stun_until:
 			p.stunned = false
+		if p.rallied and clock >= rec.rally_until:
+			p.rallied = false
+		if p.cloaked and clock >= rec.cloak_until:
+			_uncloak(rec, p)
+		if p.warded and clock >= rec.ward_until:
+			p.warded = false
+			rec.ward_amount = 0.0
 		if regen_tick and p.alive and p.mana < p.max_mana:
 			p.mana = minf(p.max_mana, p.mana + rec.mana_regen() * 0.5)
 
@@ -1548,6 +1647,8 @@ func _check_crown_touch(crown: CrownState) -> void:
 			crown.state = CrownRules.State.CARRIED
 			crown.carrier = p.peer_id
 			p.carrying_crown = crown.team
+			if p.cloaked:
+				_uncloak(records.get(p.peer_id), p)
 			_sync_crowns()
 			_announce("%s has stolen the %s crown!" % [p.display_name, GameData.team_name(crown.team)])
 			return
@@ -1651,6 +1752,9 @@ func _reset_match() -> void:
 			p.mana = p.max_mana
 			p.slowed = false
 			p.stunned = false
+			p.rallied = false
+			p.cloaked = false
+			p.warded = false
 			p.mounted = false
 			p.carrying_crown = -1
 			p.alive = true

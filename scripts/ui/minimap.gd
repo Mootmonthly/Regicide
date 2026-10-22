@@ -74,7 +74,7 @@ func _draw() -> void:
 		if not p.alive or p == me:
 			continue
 		var visible_to_us := p.team == my_team or p.carrying_crown >= 0
-		if not visible_to_us:
+		if not visible_to_us and not p.cloaked:
 			for a in allies:
 				if a.sync_pos.distance_to(p.sync_pos) < SPOT_RANGE:
 					visible_to_us = true

@@ -43,9 +43,9 @@ const SHOPPING := {
 }
 ## Spells each role learns when it has the gold and magic ore, in order.
 const SPELLS := {
-	Role.GATHERER: ["heal_aura", "spectral_warriors", "meteor"],
-	Role.ATTACKER: ["gust", "spectral_warriors", "fireball"],
-	Role.DEFENDER: ["meteor", "frost_bolt", "lightning", "gust"],
+	Role.GATHERER: ["heal_aura", "arcane_ward", "spectral_warriors", "meteor"],
+	Role.ATTACKER: ["gust", "shadow_cloak", "battle_cry", "spectral_warriors", "fireball"],
+	Role.DEFENDER: ["meteor", "thunderclap", "frost_bolt", "siphon_life", "lightning", "gust"],
 }
 const MELEE_PREFERENCE := ["war_hammer", "iron_sword", "wooden_club", "stone_axe", "pickaxe"]
 ## Resources a role keeps on hand once its wishlist is done (building is paid on placement).
@@ -481,7 +481,7 @@ static func _foe_alive(foe: Node) -> bool:
 	if foe == null or not is_instance_valid(foe) or foe.is_queued_for_deletion():
 		return false
 	if foe is Player:
-		return (foe as Player).alive
+		return (foe as Player).alive and not (foe as Player).cloaked  # can't fight what you can't see
 	return foe is Summon
 
 
@@ -605,6 +605,15 @@ func _act() -> void:
 		player.blocking = player.shield_item != "" and fighting \
 			and GameData.flat_distance(player.sync_pos, _foe_pos(target as Node3D)) < 4.0
 		return
+	# Sneaking in for the crown: go invisible on the approach.
+	if task == Task.STEAL and rec.unlocks.has("shadow_cloak") and not player.cloaked \
+			and player.carrying_crown < 0 and gm.clock >= float(rec.spell_ready.get("shadow_cloak", 0.0)) \
+			and player.sync_pos.distance_to(goal) < 90.0 \
+			and player.mana >= GameData.spell_mana(GameData.item("shadow_cloak"), rec.rank("spellweaver")):
+		player.equipped = "shadow_cloak"
+		if gm.perform_primary(player.peer_id, "shadow_cloak", Vector3.FORWARD, Vector3.ZERO):
+			player.play_action_anim("spell")
+			return
 	match task:
 		Task.GATHER:
 			var node := target as ResourceNode
@@ -700,6 +709,14 @@ func _try_spell(rec: PlayerRecord, foe: Node3D, dist: float) -> bool:
 				want = dist > 8.0 and dist < float(def["range"]) * 0.8
 			"heal_aura":
 				want = player.health < player.max_health * 0.6
+			"thunderclap":
+				want = dist < 4.0
+			"siphon_life":
+				want = dist < float(def["range"]) * 0.8 and player.health < player.max_health * 0.85
+			"battle_cry":
+				want = dist < 25.0
+			"arcane_ward":
+				want = dist < 15.0 and not player.warded
 			"fireball", "frost_bolt", "lightning":
 				want = dist > 4.0 and dist < float(def["range"]) * 0.8
 		if not want:

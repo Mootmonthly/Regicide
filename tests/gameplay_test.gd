@@ -622,6 +622,99 @@ func _run() -> void:
 	_ready_to_act(1)
 	gm.perform_primary(1, "iron_sword", Vector3(0, 0, -1), Vector3.ZERO)
 	check(is_equal_approx(me.health, 53.0), "Bloodlust: a 30-damage hit heals 3 (now %.1f)" % me.health)
+	# --- More spells ---
+	for sp in ["thunderclap", "siphon_life", "battle_cry", "shadow_cloak", "arcane_ward"]:
+		rec.gold += 300
+		rec.inventory.add("magic_ore", 6)
+		gm.request_unlock(sp)
+		check(rec.unlocks.has(sp), "learn %s" % sp)
+	# Thunderclap stuns enemies close by (Iron Will shortens it).
+	erec.skills["iron_will"] = 2
+	enemy.health = enemy.max_health
+	_place(me, Vector3(-120, 0, 50), Vector3(-120, 0, 47))
+	enemy.teleport(Vector3(-120, 0, 47))
+	await _frames(3)
+	me.mana = me.max_mana
+	rec.spell_ready.clear()
+	_ready_to_act(1)
+	check(gm.perform_primary(1, "thunderclap", Vector3(0, 0, -1), Vector3.ZERO), "cast thunderclap")
+	check(enemy.stunned and enemy.health < enemy.max_health, "thunderclap hurts and stuns enemies nearby")
+	check(absf(erec.stun_until - gm.clock - 0.75) < 0.05, "Iron Will rank 2 halves the stun (%.2f s)" % (erec.stun_until - gm.clock))
+	erec.skills.clear()
+	await _frames(60)
+	check(not enemy.stunned, "the stun wears off")
+	# Siphon Life drains and heals.
+	enemy.health = enemy.max_health
+	enemy.teleport(Vector3(-120, 0, 35))
+	await _frames(3)
+	me.health = 50.0
+	_ready_to_act(1)
+	check(gm.perform_primary(1, "siphon_life", (enemy.chest() - (me.sync_pos + Vector3(0, 1.5, 0))).normalized(), Vector3.ZERO), "cast siphon life")
+	check(is_equal_approx(enemy.health, enemy.max_health - 22.0) and is_equal_approx(me.health, 72.0), "siphon life takes 22 and heals you 22 (you %.0f)" % me.health)
+	# Battle Cry: faster, and hits harder.
+	me.mana = me.max_mana
+	var walk := me.current_speed(false)
+	_ready_to_act(1)
+	check(gm.perform_primary(1, "battle_cry", Vector3(0, 0, -1), Vector3.ZERO), "cast battle cry")
+	check(me.rallied and me.current_speed(false) > walk * 1.2, "battle cry makes you faster")
+	enemy.health = enemy.max_health
+	enemy.teleport(Vector3(-120, 0, 48))
+	await _frames(3)
+	_ready_to_act(1)
+	gm.perform_primary(1, "iron_sword", Vector3(0, 0, -1), Vector3.ZERO)
+	check(is_equal_approx(enemy.max_health - enemy.health, 36.0), "battle cry: +20%% damage (took %.0f)" % (enemy.max_health - enemy.health))
+	rec.rally_until = gm.clock
+	await _frames(10)
+	check(not me.rallied, "battle cry wears off")
+	# Arcane Ward soaks damage.
+	me.health = me.max_health
+	me.mana = me.max_mana
+	_ready_to_act(1)
+	check(gm.perform_primary(1, "arcane_ward", Vector3(0, 0, -1), Vector3.ZERO), "cast arcane ward")
+	gm.damage_player(1, 30.0, ENEMY)
+	check(me.health == me.max_health and me.warded, "the ward soaks a 30-damage hit")
+	gm.damage_player(1, 30.0, ENEMY)
+	check(is_equal_approx(me.health, me.max_health - 20.0) and not me.warded, "then breaks, letting the rest through")
+	# Shadow Cloak hides you from bots, turrets and warriors until you act.
+	me.health = me.max_health
+	me.mana = me.max_mana
+	_ready_to_act(1)
+	check(gm.perform_primary(1, "shadow_cloak", Vector3(0, 0, -1), Vector3.ZERO), "cast shadow cloak")
+	check(me.cloaked and gm.nearest_enemy(enemy.sync_pos, 1, 50.0) != me, "cloaked players are hidden from enemy targeting")
+	_ready_to_act(1)
+	gm.perform_primary(1, "iron_sword", Vector3(0, 0, -1), Vector3.ZERO)
+	check(not me.cloaked, "attacking reveals you")
+	gm.crowns[1].state = CrownRules.State.CARRIED
+	gm.crowns[1].carrier = 1
+	me.carrying_crown = 1
+	rec.spell_ready.clear()
+	me.mana = me.max_mana
+	_ready_to_act(1)
+	check(not gm.perform_primary(1, "shadow_cloak", Vector3(0, 0, -1), Vector3.ZERO), "you can't cloak while carrying a crown")
+	gm.crowns[1].send_home()
+	me.carrying_crown = -1
+	gm._sync_crowns()
+	# --- More skills ---
+	rec.skill_points = 10
+	check(gm.perform_skill(1, "bounty_hunter"), "learn Bounty Hunter")
+	var gold_before := rec.gold
+	enemy.health = 1.0
+	_ready_to_act(1)
+	gm.perform_primary(1, "iron_sword", Vector3(0, 0, -1), Vector3.ZERO)
+	check(rec.gold - gold_before == GameData.GOLD_PER_KILL + 15, "Bounty Hunter: +15 gold per kill (got %d)" % (rec.gold - gold_before))
+	check(gm.perform_skill(1, "horsemanship"), "learn Horsemanship")
+	await _frames(2)
+	me.mounted = true
+	var ride := me.current_speed(false)
+	rec.skills.erase("horsemanship")
+	gm._push_private(1)
+	await _frames(2)
+	check(ride > me.current_speed(false) * 1.07, "Horsemanship: riding is faster")
+	me.mounted = false
+	gm._respawn(ENEMY)
+	erec.protected_until = 0.0
+	enemy.health = enemy.max_health
+	await _frames(2)
 	me.health = me.max_health
 	rec.skills.clear()
 	rec.skill_points = 0

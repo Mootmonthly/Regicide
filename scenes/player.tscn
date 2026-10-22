@@ -47,6 +47,15 @@ properties/7/replication_mode = 2
 properties/8/path = NodePath(".:stunned")
 properties/8/spawn = true
 properties/8/replication_mode = 2
+properties/9/path = NodePath(".:rallied")
+properties/9/spawn = true
+properties/9/replication_mode = 2
+properties/10/path = NodePath(".:cloaked")
+properties/10/spawn = true
+properties/10/replication_mode = 2
+properties/11/path = NodePath(".:warded")
+properties/11/spawn = true
+properties/11/replication_mode = 2
 
 [node name="Player" type="CharacterBody3D"]
 script = ExtResource("1_player")

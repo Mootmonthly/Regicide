@@ -52,6 +52,22 @@ func reset_progress() -> void:
 	skills.clear()
 	skill_points = 0
 	spell_ready.clear()
+	rally_until = 0.0
+	cloak_until = 0.0
+	ward_amount = 0.0
+	ward_until = 0.0
+
+
+## Timed effects from spells (GameMode clock).
+var rally_until := 0.0
+var cloak_until := 0.0
+var ward_amount := 0.0
+var ward_until := 0.0
+
+
+## How long a stun or slow lasts on this player, after Iron Will.
+func status_duration(seconds: float) -> float:
+	return seconds * (1.0 - 0.25 * rank("iron_will"))
 
 
 func rank(skill: String) -> int:
