@@ -252,45 +252,104 @@ func generate(seed_value: int) -> void:
 	_build_forest()
 
 
-## Draws every tree with one MultiMesh per part (trunks, pine tiers, oak crowns...)
-## instead of thousands of separate meshes.
+## Draws every tree with one MultiMesh per model mesh (Kenney Nature Kit pines and
+## broadleaf trees), instead of thousands of separate meshes.
 func _build_forest() -> void:
 	if Net.is_dedicated():
 		return
-	var groups := {}  # "mesh|color" -> {mesh, color, xfs: [], owners: [[index, is_stump]]}
+	var groups := {}  # Mesh -> {xfs: [], owners: [[index, is_stump]]}
 	for n in resource_nodes:
 		if n.res_type != "wood":
 			continue
-		var info := ResourceNode.tree_parts(n.index)
 		var base := Transform3D(Basis(Vector3.UP, n.rotation.y), n.position)
-		var entries: Array = info["parts"].duplicate()
-		entries.append(info["stump"])
-		for k in entries.size():
-			var part: Array = entries[k]
-			var key := "%s|%s" % [part[0], (part[1] as Color).to_html()]
-			if not groups.has(key):
-				groups[key] = {"mesh": part[0], "color": part[1], "xfs": [], "owners": []}
-			groups[key]["xfs"].append(base * (part[2] as Transform3D))
-			groups[key]["owners"].append([n.index, k == entries.size() - 1])
-	for key: String in groups:
-		var g: Dictionary = groups[key]
+		var height := ResourceNode.tree_size(n.index)
+		var parts := Models.meshes_for_height(ResourceNode.tree_model(n.index), height)
+		for part: Array in parts:
+			_add_instance(groups, part[0], base * (part[1] as Transform3D), [n.index, false])
+		for part: Array in Models.meshes_for_height(ResourceNode.STUMP, 0.9 * height / 16.0):
+			_add_instance(groups, part[0], base * (part[1] as Transform3D), [n.index, true])
+	for mesh: Mesh in groups:
+		var g: Dictionary = groups[mesh]
 		var mm := MultiMesh.new()
 		mm.transform_format = MultiMesh.TRANSFORM_3D
-		mm.mesh = ResourceNode.mesh_for(g["mesh"])
+		mm.mesh = mesh
 		mm.instance_count = g["xfs"].size()
 		for i in mm.instance_count:
 			var xf: Transform3D = g["xfs"][i]
 			var owner: Array = g["owners"][i]
 			var stump: bool = owner[1]
-			var record := [mm, i, xf]
 			var table := _stump_instances if stump else _tree_instances
 			if not table.has(owner[0]):
 				table[owner[0]] = []
-			table[owner[0]].append(record)
+			table[owner[0]].append([mm, i, xf])
 			mm.set_instance_transform(i, _hidden(xf) if stump else xf)
 		var mmi := MultiMeshInstance3D.new()
 		mmi.multimesh = mm
-		mmi.material_override = Visuals.mat(g["color"])
+		resources_root.add_child(mmi)
+	_build_ground_cover()
+
+
+func _add_instance(groups: Dictionary, mesh: Mesh, xf: Transform3D, owner: Array) -> void:
+	if not groups.has(mesh):
+		groups[mesh] = {"xfs": [], "owners": []}
+	groups[mesh]["xfs"].append(xf)
+	groups[mesh]["owners"].append(owner)
+
+
+## Grass tufts, bushes, flowers and mushrooms scattered over the map (no collision).
+const GROUND_COVER := [
+	["grass_large", 0.9, 34], ["grass", 0.6, 20], ["grass_leafsLarge", 0.8, 8],
+	["plant_bush", 1.1, 7], ["plant_bushLarge", 1.6, 4], ["plant_bushDetailed", 1.2, 4],
+	["flower_redA", 0.6, 5], ["flower_yellowB", 0.6, 5], ["flower_purpleA", 0.6, 5],
+	["mushroom_redGroup", 0.45, 3], ["mushroom_tanGroup", 0.45, 3], ["log", 0.6, 2],
+]
+const GROUND_COVER_COUNT := 9000
+
+
+func _build_ground_cover() -> void:
+	var rng := RandomNumberGenerator.new()
+	rng.seed = map_seed + 99
+	var total := 0
+	for entry: Array in GROUND_COVER:
+		total += int(entry[2])
+	var groups := {}
+	for k in GROUND_COVER_COUNT:
+		var x := rng.randf_range(-GameData.MAP_WIDTH * 0.5 + 2, GameData.MAP_WIDTH * 0.5 - 2)
+		var z := rng.randf_range(-GameData.MAP_LENGTH * 0.5 + 2, GameData.MAP_LENGTH * 0.5 - 2)
+		var pick := rng.randi() % total
+		var entry: Array = GROUND_COVER[0]
+		for e: Array in GROUND_COVER:
+			pick -= int(e[2])
+			if pick < 0:
+				entry = e
+				break
+		var y := Terrain.height(x, z)
+		if y < Terrain.WATER_LEVEL + 0.15:
+			continue
+		var near_crown := false
+		for t in GameData.TEAM_COUNT:
+			if GameData.flat_distance(Vector3(x, 0, z), GameData.crown_pos(t)) < 9.0:
+				near_crown = true
+		if near_crown:
+			continue
+		var base := Transform3D(Basis(Vector3.UP, rng.randf() * TAU), Vector3(x, y, z))
+		var size: float = entry[1] * rng.randf_range(0.75, 1.3)
+		for part: Array in Models.meshes_for_height("res://assets/nature/%s.glb" % entry[0], size):
+			if not groups.has(part[0]):
+				groups[part[0]] = []
+			groups[part[0]].append(base * (part[1] as Transform3D))
+	for mesh: Mesh in groups:
+		var xfs: Array = groups[mesh]
+		var mm := MultiMesh.new()
+		mm.transform_format = MultiMesh.TRANSFORM_3D
+		mm.mesh = mesh
+		mm.instance_count = xfs.size()
+		for i in xfs.size():
+			mm.set_instance_transform(i, xfs[i])
+		var mmi := MultiMeshInstance3D.new()
+		mmi.multimesh = mm
+		mmi.cast_shadow = GeometryInstance3D.SHADOW_CASTING_SETTING_OFF
+		mmi.visibility_range_end = 160.0
 		resources_root.add_child(mmi)
 
 
@@ -611,7 +670,7 @@ func _build_terrain() -> void:
 	st.generate_normals()
 	var mi := MeshInstance3D.new()
 	mi.mesh = st.commit()
-	var mat := StandardMaterial3D.new()
+	var mat := Visuals.textured("grass", Color.WHITE).duplicate() as StandardMaterial3D
 	mat.vertex_color_use_as_albedo = true
 	mat.roughness = 1.0
 	mi.material_override = mat

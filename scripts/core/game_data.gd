@@ -80,6 +80,7 @@ const ITEMS := {
 	# Tools
 	"stone_axe": {
 		"name": "Stone Axe", "kind": "tool", "unlock_cost": 0,
+		"model": "res://assets/survival/tool-axe.glb",
 		"recipe": {"wood": 6, "stone": 3},
 		"damage": 14.0, "range": 2.4, "cooldown": 0.6, "structure_damage": 8.0,
 		"gather": {"wood": 4, "stone": 1},
@@ -88,6 +89,7 @@ const ITEMS := {
 	},
 	"pickaxe": {
 		"name": "Pickaxe", "kind": "tool", "unlock_cost": 0,
+		"model": "res://assets/survival/tool-pickaxe.glb",
 		"recipe": {"wood": 5, "stone": 5},
 		"damage": 12.0, "range": 2.4, "cooldown": 0.7, "structure_damage": 10.0,
 		"gather": {"wood": 1, "stone": 4, "iron": 3, "magic_ore": 2},
@@ -97,6 +99,7 @@ const ITEMS := {
 	# Weapons
 	"wooden_club": {
 		"name": "Wooden Club", "kind": "weapon", "unlock_cost": 0,
+		"model": "res://assets/survival/tool-hammer.glb",
 		"recipe": {"wood": 8},
 		"damage": 18.0, "range": 2.3, "cooldown": 0.6, "structure_damage": 6.0,
 		"gather": {"wood": 1},
@@ -113,6 +116,7 @@ const ITEMS := {
 	},
 	"war_hammer": {
 		"name": "War Hammer", "kind": "weapon", "unlock_cost": 150,
+		"model": "res://assets/survival/tool-hammer-upgraded.glb",
 		"recipe": {"wood": 4, "iron": 12},
 		"damage": 45.0, "range": 2.6, "cooldown": 1.1, "structure_damage": 45.0,
 		"gather": {"stone": 2},
@@ -160,96 +164,112 @@ const ITEMS := {
 	# "upgrade" names the stone version a wood piece can be upgraded to in place.
 	"wood_wall": {
 		"name": "Wood Wall", "kind": "structure", "piece": "wall", "category": "walls", "unlock_cost": 0,
+		"material": "wood", "model": "res://assets/survival/fence-fortified.glb", "model_tiles": Vector3i(4, 1, 1),
 		"recipe": {"wood": 8}, "health": 300.0, "thickness": 0.4, "upgrade": "stone_wall",
 		"color": Color(0.55, 0.38, 0.2),
 		"desc": "Cheap palisade wall.",
 	},
 	"stone_wall": {
 		"name": "Stone Wall", "kind": "structure", "piece": "wall", "category": "walls", "unlock_cost": 0,
+		"material": "stone", "model": "res://assets/castle/wall.glb", "model_tiles": Vector3i(4, 1, 1),
 		"recipe": {"stone": 10}, "health": 800.0, "thickness": 0.6,
 		"color": Color(0.6, 0.6, 0.62),
 		"desc": "Sturdy masonry wall.",
 	},
 	"wood_half_wall": {
 		"name": "Wood Half Wall", "kind": "structure", "piece": "half", "category": "walls", "unlock_cost": 0,
+		"material": "wood", "model": "res://assets/survival/fence.glb", "model_tiles": Vector3i(4, 1, 1),
 		"recipe": {"wood": 4}, "health": 160.0, "thickness": 0.4, "upgrade": "stone_half_wall",
 		"color": Color(0.58, 0.4, 0.22),
 		"desc": "Waist-high cover you can shoot over. Can't hold anything up.",
 	},
 	"stone_half_wall": {
 		"name": "Stone Half Wall", "kind": "structure", "piece": "half", "category": "walls", "unlock_cost": 0,
+		"material": "stone", "model": "res://assets/castle/wall-half.glb", "model_tiles": Vector3i(4, 1, 1),
 		"recipe": {"stone": 5}, "health": 420.0, "thickness": 0.6,
 		"color": Color(0.62, 0.62, 0.64),
 		"desc": "Sturdy waist-high cover.",
 	},
 	"battlement": {
 		"name": "Battlement", "kind": "structure", "piece": "half", "category": "walls", "unlock_cost": 0,
+		"material": "stone", "model": "res://assets/castle/wall-half-modular.glb", "model_tiles": Vector3i(4, 1, 1),
 		"recipe": {"stone": 8}, "health": 550.0, "thickness": 0.6, "battlement": true,
 		"color": Color(0.58, 0.58, 0.6),
 		"desc": "Crenellated parapet for wall-tops: duck behind the merlons, shoot through the gaps.",
 	},
 	"wood_window": {
 		"name": "Wood Window Wall", "kind": "structure", "piece": "wall", "category": "walls", "unlock_cost": 0,
+		"material": "wood",
 		"recipe": {"wood": 7}, "health": 240.0, "thickness": 0.4, "window": true, "upgrade": "stone_window",
 		"color": Color(0.55, 0.38, 0.2),
 		"desc": "Wall with a big window to see and shoot through.",
 	},
 	"stone_window": {
 		"name": "Stone Window Wall", "kind": "structure", "piece": "wall", "category": "walls", "unlock_cost": 0,
+		"material": "stone",
 		"recipe": {"stone": 9}, "health": 600.0, "thickness": 0.6, "window": true,
 		"color": Color(0.6, 0.6, 0.62),
 		"desc": "Stone wall with a big window.",
 	},
 	"arrow_slit": {
 		"name": "Arrow Slit Wall", "kind": "structure", "piece": "wall", "category": "walls", "unlock_cost": 0,
+		"material": "stone",
 		"recipe": {"stone": 12}, "health": 650.0, "thickness": 0.6, "slit": true,
 		"color": Color(0.55, 0.55, 0.58),
 		"desc": "Stone wall with a chest-high gap to shoot arrows through.",
 	},
 	"wood_door": {
 		"name": "Wood Door", "kind": "structure", "piece": "door", "category": "walls", "unlock_cost": 0,
+		"material": "wood", "model": "res://assets/survival/fence-doorway.glb", "model_tiles": Vector3i(2, 1, 1),
 		"recipe": {"wood": 12}, "health": 350.0, "thickness": 0.4,
 		"color": Color(0.62, 0.45, 0.25),
 		"desc": "A wall your own team can walk through.",
 	},
 	"drawbridge": {
 		"name": "Drawbridge", "kind": "structure", "piece": "drawbridge", "category": "walls", "unlock_cost": 0,
+		"material": "wood", "model": "res://assets/castle/bridge-draw.glb", "model_rot": Vector3(-90, 0, 0), "model_leaf": true,
 		"recipe": {"wood": 20, "iron": 4}, "health": 700.0,
 		"color": Color(0.5, 0.36, 0.2),
 		"desc": "Raised, it blocks everyone. Your team lowers it (E) into a 6 m bridge across the river's narrows.",
 	},
 	"wood_floor": {
 		"name": "Wood Floor", "kind": "structure", "piece": "floor", "category": "floors", "unlock_cost": 0,
+		"material": "wood", "model": "res://assets/survival/floor.glb", "model_tiles": Vector3i(2, 1, 2),
 		"recipe": {"wood": 6}, "health": 250.0, "upgrade": "stone_floor",
 		"color": Color(0.6, 0.45, 0.28),
 		"desc": "Floor, foundation or bridge deck. Rests on walls or the ground, reaches one cell out.",
 	},
 	"stone_floor": {
 		"name": "Stone Floor", "kind": "structure", "piece": "floor", "category": "floors", "unlock_cost": 0,
+		"material": "stone",
 		"recipe": {"stone": 8}, "health": 600.0,
 		"color": Color(0.5, 0.5, 0.52),
 		"desc": "Sturdy floor or foundation.",
 	},
 	"wood_stairs": {
 		"name": "Wood Stairs", "kind": "structure", "piece": "stairs", "category": "floors", "unlock_cost": 0,
+		"material": "wood",
 		"recipe": {"wood": 8}, "health": 250.0,
 		"color": Color(0.58, 0.42, 0.24),
 		"desc": "Climbs one level (3 m). Build them on the ground or on a floor.",
 	},
 	"wood_roof": {
 		"name": "Wood Roof", "kind": "structure", "piece": "roof", "category": "floors", "unlock_cost": 0,
+		"material": "roof",
 		"recipe": {"wood": 6}, "health": 250.0,
 		"color": Color(0.5, 0.22, 0.16),
 		"desc": "Sloped roof. Rests on walls. Shelters you from arrows and fireballs.",
 	},
 	"ladder": {
 		"name": "Ladder", "kind": "structure", "piece": "ladder", "category": "floors", "unlock_cost": 0,
+		"material": "wood",
 		"recipe": {"wood": 4}, "health": 120.0,
 		"color": Color(0.65, 0.5, 0.3),
 		"desc": "Lean it on any wall, even the enemy's, and climb with W. Stack them to go higher.",
 	},
 	"spike_trap": {
 		"name": "Spike Trap", "kind": "structure", "piece": "free", "category": "siege", "unlock_cost": 100,
+		"material": "stone",
 		"recipe": {"wood": 6, "iron": 3}, "health": 120.0,
 		"trap": {"damage": 12.0, "interval": 0.75},
 		"color": Color(0.5, 0.5, 0.52),
@@ -257,6 +277,7 @@ const ITEMS := {
 	},
 	"ballista": {
 		"name": "Ballista", "kind": "structure", "piece": "free", "category": "siege", "unlock_cost": 300,
+		"material": "wood", "model": "res://assets/castle/siege-ballista.glb", "model_box": AABB(Vector3(-1.2, 0, -1.2), Vector3(2.4, 1.9, 2.4)),
 		"recipe": {"wood": 25, "iron": 10}, "health": 400.0,
 		"turret": {"range": 32.0, "damage": 22.0, "cooldown": 2.5},
 		"color": Color(0.45, 0.3, 0.15),
@@ -264,6 +285,7 @@ const ITEMS := {
 	},
 	"catapult": {
 		"name": "Catapult", "kind": "structure", "piece": "free", "category": "siege", "unlock_cost": 250,
+		"material": "wood", "model": "res://assets/castle/siege-catapult.glb", "model_box": AABB(Vector3(-1.3, 0, -1.6), Vector3(2.6, 2.6, 3.2)),
 		"recipe": {"wood": 30, "stone": 10, "iron": 5}, "health": 500.0,
 		"catapult": {"cooldown": 6.0, "speed": 24.0, "damage": 35.0, "structure_damage": 260.0, "radius": 3.2, "ammo": {"stone": 5}},
 		"color": Color(0.48, 0.33, 0.18),
@@ -271,6 +293,7 @@ const ITEMS := {
 	},
 	"battering_ram": {
 		"name": "Battering Ram", "kind": "structure", "piece": "vehicle", "category": "siege", "unlock_cost": 200,
+		"material": "wood", "model": "res://assets/castle/siege-ram.glb", "model_rot": Vector3(0, 90, 0), "model_box": AABB(Vector3(-1.1, 0, -2.6), Vector3(2.2, 2.2, 5.2)),
 		"recipe": {"wood": 30, "iron": 10}, "health": 750.0,
 		"ram": {"speed": 2.4, "damage": 240.0, "interval": 2.0, "turn_rate": 0.7},
 		"color": Color(0.42, 0.3, 0.18),
@@ -357,6 +380,7 @@ const ITEMS := {
 	# What Earth Wall summons (not buildable directly).
 	"earth_wall_piece": {
 		"name": "Earth Wall", "kind": "structure", "piece": "wall", "category": "", "unlock_cost": 0,
+		"material": "stone",
 		"recipe": {}, "health": 500.0, "thickness": 0.7,
 		"color": Color(0.5, 0.4, 0.28),
 		"desc": "Summoned by the Earth Wall spell. Crumbles after 15 s.",

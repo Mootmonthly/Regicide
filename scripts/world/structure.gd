@@ -130,10 +130,19 @@ func _ready() -> void:
 		collision_layer = GameData.gate_layer(team)  # only enemies collide
 	else:
 		collision_layer = 4  # layer 3: structures
+	var def := GameData.item(item_id)
+	var tc := GameData.team_color(team)
+	var mat_kind: String = def.get("material", "")
+	var model_path: String = def.get("model", "")
+	var has_model := model_path != "" and not Net.is_dedicated()
+	var model_on_leaf: bool = def.get("model_leaf", false)
 	var first := true
+	var main_solid := AABB()
+	var leaf_solid := AABB()
 	for b: Dictionary in piece_boxes(item_id, team):
 		var holder: Node3D = self
-		if b.get("leaf", false):
+		var on_leaf: bool = b.get("leaf", false)
+		if on_leaf:
 			if _leaf == null:
 				_leaf = Node3D.new()
 				_leaf.name = "Leaf"
@@ -142,7 +151,8 @@ func _ready() -> void:
 			holder = _leaf
 		var xf: Transform3D = b["xf"]
 		var size: Vector3 = b["size"]
-		var box_bounds := (holder.transform * xf if holder != self else xf) * AABB(-size * 0.5, size)
+		var local_box := xf * AABB(-size * 0.5, size)
+		var box_bounds := (holder.transform * local_box) if holder != self else local_box
 		bounds = box_bounds if first else bounds.merge(box_bounds)
 		first = false
 		if b["solid"]:
@@ -153,10 +163,25 @@ func _ready() -> void:
 			shape.shape = bs
 			shape.transform = xf
 			holder.add_child(shape)
-		if b["visual"] and not Net.is_dedicated():
-			var mi := Visuals.box(size, b["color"])
+			if on_leaf:
+				leaf_solid = local_box if leaf_solid.size == Vector3.ZERO else leaf_solid.merge(local_box)
+			else:
+				main_solid = local_box if main_solid.size == Vector3.ZERO else main_solid.merge(local_box)
+		var color: Color = b["color"]
+		var is_band := color == tc
+		# With a model, only the team-colored band is still drawn as a box (plus the
+		# parts the model doesn't cover).
+		var covered := has_model and (on_leaf == model_on_leaf) and not is_band
+		if b["visual"] and not Net.is_dedicated() and not covered:
+			var mi := Visuals.box(size, color)
 			mi.transform = xf
+			if mat_kind != "" and not is_band:
+				mi.material_override = Visuals.textured(mat_kind, color)
 			holder.add_child(mi)
+	if has_model:
+		var target: AABB = def.get("model_box", leaf_solid if model_on_leaf else main_solid)
+		var model := Models.fitted(model_path, target, def.get("model_tiles", Vector3i.ONE), def.get("model_rot", Vector3.ZERO))
+		(_leaf if model_on_leaf and _leaf else self).add_child(model)
 	set_physics_process(not _turret.is_empty() or is_trap() or is_vehicle())
 	set_process(is_vehicle() and not Net.is_dedicated())
 	var world := _world()

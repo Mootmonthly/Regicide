@@ -42,18 +42,42 @@ func _ready() -> void:
 			radius = 0.45 * tree_height / 16.0
 			cyl.height = tree_height
 		"stone":
-			radius = 1.0
-			cyl.height = 1.4
-			_visual.add_child(Visuals.mesh_instance(_mesh("rock"), Color(0.55, 0.55, 0.57), Vector3(0, 0.55, 0)))
+			radius = 1.1
+			cyl.height = 1.6
+			if not Net.is_dedicated():
+				var boulder := "res://assets/nature/%s.glb" % BOULDERS[index % BOULDERS.size()]
+				_visual.add_child(Models.standing(boulder, 1.7))
 		"iron":
 			radius = 0.9
-			cyl.height = 1.4
-			_visual.add_child(Visuals.mesh_instance(_mesh("rock"), Color(0.32, 0.3, 0.3), Vector3(0, 0.55, 0)))
-			_visual.add_child(Visuals.mesh_instance(_mesh("vein"), Color(0.75, 0.42, 0.2), Vector3(0.2, 0.9, 0.1)))
+			cyl.height = 2.4
+			if not Net.is_dedicated():
+				var crag := "res://assets/nature/%s.glb" % TALL_ROCKS[index % TALL_ROCKS.size()]
+				var rock := Models.standing(crag, 2.6)
+				_visual.add_child(rock)
+				# Rusty ore veins.
+				for k in 3:
+					var a := TAU * k / 3.0 + index
+					var vein := Visuals.mesh_instance(_mesh("vein"), Color(0.78, 0.42, 0.18), Vector3(cos(a) * 0.55, 0.6 + k * 0.5, sin(a) * 0.55), 0.3)
+					vein.rotation = Vector3(0.3, a, 0.4)
+					_visual.add_child(vein)
 		"magic_ore":
-			radius = 0.7
+			radius = 0.8
 			cyl.height = 2.2
-			_visual.add_child(Visuals.mesh_instance(_mesh("crystal"), Color(0.6, 0.25, 0.95), Vector3(0, 1.1, 0), 1.5))
+			var glow := Color(0.62, 0.28, 1.0)
+			_visual.add_child(Visuals.mesh_instance(_mesh("crystal"), glow, Vector3(0, 1.1, 0), 1.6))
+			for k in 3:
+				var a := TAU * k / 3.0
+				var shard := Visuals.mesh_instance(_mesh("crystal"), glow.lightened(0.15), Vector3(cos(a) * 0.55, 0.45, sin(a) * 0.55), 1.4)
+				shard.scale = Vector3.ONE * 0.45
+				shard.rotation = Vector3(cos(a) * 0.5, 0, sin(a) * 0.5)
+				_visual.add_child(shard)
+			if not Net.is_dedicated():
+				var light := OmniLight3D.new()
+				light.light_color = glow
+				light.light_energy = 0.8
+				light.omni_range = 5.0
+				light.position.y = 1.2
+				_visual.add_child(light)
 	cyl.radius = radius
 	_shape.shape = cyl
 	_shape.position.y = cyl.height * 0.5
@@ -102,27 +126,18 @@ static func is_oak(i: int) -> bool:
 	return fmod(absf(sin(i * 13.31) * 9123.4), 1.0) < 0.3
 
 
-## The pieces a tree is drawn from: [mesh key, color, local transform], plus its stump.
-static func tree_parts(i: int) -> Dictionary:
-	var sc := tree_size(i) / 16.0
-	var bark := Color(0.4, 0.27, 0.15)
-	var parts := []
-	if is_oak(i):
-		var leaf := Color(0.27, 0.5, 0.2)
-		parts.append(["oak_trunk", bark, Vector3(0, 5.5, 0)])
-		parts.append(["oak_crown", leaf, Vector3(0, 11.5, 0)])
-		parts.append(["oak_lobe", leaf.darkened(0.08), Vector3(2.4, 10.0, 0.8)])
-		parts.append(["oak_lobe", leaf.lightened(0.05), Vector3(-1.8, 10.6, -1.6)])
-	else:
-		var needle := Color(0.16, 0.42, 0.22)
-		parts.append(["pine_trunk", bark, Vector3(0, 8.0, 0)])
-		parts.append(["pine_low", needle, Vector3(0, 6.5, 0)])
-		parts.append(["pine_mid", needle.lightened(0.04), Vector3(0, 10.0, 0)])
-		parts.append(["pine_top", needle.lightened(0.08), Vector3(0, 13.5, 0)])
-	var out := []
-	for p: Array in parts:
-		out.append([p[0], p[1], Transform3D(Basis().scaled(Vector3.ONE * sc), (p[2] as Vector3) * sc)])
-	return {"parts": out, "stump": ["stump", bark.darkened(0.1), Transform3D(Basis().scaled(Vector3.ONE * sc), Vector3(0, 0.35 * sc, 0))]}
+const PINES := ["tree_pineTallA", "tree_pineTallB", "tree_pineTallC", "tree_pineTallD",
+	"tree_pineTallA_detailed", "tree_pineTallC_detailed"]
+const BROADLEAF := ["tree_oak", "tree_default", "tree_detailed", "tree_fat", "tree_tall"]
+const BOULDERS := ["stone_largeA", "stone_largeB", "stone_largeC", "stone_largeD", "stone_largeE", "stone_largeF"]
+const TALL_ROCKS := ["stone_tallA", "stone_tallB", "stone_tallC", "stone_tallD", "stone_tallE", "stone_tallF"]
+const STUMP := "res://assets/nature/stump_round.glb"
+
+
+## Which Nature Kit tree model a tree uses (deterministic from its index).
+static func tree_model(i: int) -> String:
+	var list: Array = BROADLEAF if is_oak(i) else PINES
+	return "res://assets/nature/%s.glb" % list[absi(i * 7919) % list.size()]
 
 
 static func mesh_for(kind: String) -> Mesh:

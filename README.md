@@ -8,9 +8,9 @@ drawbridges and battlements make attacking and defending a base a real fight.
 
 ![First person, sword and shield](docs/screenshots/first_person.png)
 
-![The river narrows](docs/screenshots/river_narrows.png)
+![A squad at a half-built fort](docs/screenshots/squad.png)
 
-![A drawbridge lowered across the river](docs/screenshots/drawbridge.png)
+![The forest by the river](docs/screenshots/forest_middle.png)
 
 ## Running it
 
@@ -119,3 +119,9 @@ per-minute report (kills, steals, captures, structures, items, server frame time
 
 See [docs/DESIGN.md](docs/DESIGN.md) for the game design and roadmap, and
 [docs/ARCHITECTURE.md](docs/ARCHITECTURE.md) for how the networking fits together.
+
+## Credits
+
+3D models are from [Kenney](https://kenney.nl) (CC0 / public domain): Castle Kit,
+Survival Kit, Nature Kit and Mini Characters. Each pack's license is next to its models
+in `assets/`.

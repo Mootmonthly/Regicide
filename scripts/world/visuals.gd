@@ -23,6 +23,73 @@ static func mat(color: Color, emission := 0.0) -> StandardMaterial3D:
 	return m
 
 
+## Procedurally textured material: "stone" (blocky cells), "wood" (grain), "roof"
+## (tile rows) or "grass" (speckle, used as terrain detail). Triplanar, so any box
+## size gets the same texture density.
+static func textured(kind: String, color: Color) -> StandardMaterial3D:
+	var key := "tex|%s|%s" % [kind, color.to_html()]
+	if _materials.has(key):
+		return _materials[key]
+	var m := StandardMaterial3D.new()
+	m.albedo_color = color
+	m.albedo_texture = _noise_texture(kind)
+	m.uv1_triplanar = true
+	m.roughness = 0.95
+	match kind:
+		"stone":
+			m.uv1_scale = Vector3(0.6, 0.6, 0.6)
+		"wood":
+			m.uv1_scale = Vector3(0.25, 1.6, 0.25)
+		"roof":
+			m.uv1_scale = Vector3(0.8, 1.6, 0.8)
+		_:
+			m.uv1_scale = Vector3(0.12, 0.12, 0.12)
+	_materials[key] = m
+	return m
+
+
+static var _noise_textures: Dictionary = {}
+
+
+static func _noise_texture(kind: String) -> NoiseTexture2D:
+	if _noise_textures.has(kind):
+		return _noise_textures[kind]
+	var noise := FastNoiseLite.new()
+	var ramp := Gradient.new()
+	match kind:
+		"stone":
+			noise.noise_type = FastNoiseLite.TYPE_CELLULAR
+			noise.frequency = 0.035
+			noise.cellular_return_type = FastNoiseLite.RETURN_DISTANCE2_SUB
+			ramp.set_color(0, Color(0.62, 0.62, 0.62))
+			ramp.set_color(1, Color(1.08, 1.08, 1.08))
+		"wood":
+			noise.noise_type = FastNoiseLite.TYPE_SIMPLEX
+			noise.frequency = 0.05
+			noise.fractal_octaves = 4
+			ramp.set_color(0, Color(0.7, 0.7, 0.7))
+			ramp.set_color(1, Color(1.1, 1.1, 1.1))
+		"roof":
+			noise.noise_type = FastNoiseLite.TYPE_CELLULAR
+			noise.frequency = 0.06
+			ramp.set_color(0, Color(0.65, 0.65, 0.65))
+			ramp.set_color(1, Color(1.05, 1.05, 1.05))
+		_:
+			noise.noise_type = FastNoiseLite.TYPE_SIMPLEX_SMOOTH
+			noise.frequency = 0.08
+			noise.fractal_octaves = 3
+			ramp.set_color(0, Color(0.82, 0.86, 0.8))
+			ramp.set_color(1, Color(1.08, 1.06, 1.02))
+	var tex := NoiseTexture2D.new()
+	tex.width = 256
+	tex.height = 256
+	tex.seamless = true
+	tex.noise = noise
+	tex.color_ramp = ramp
+	_noise_textures[kind] = tex
+	return tex
+
+
 static func mesh_instance(mesh: Mesh, color: Color, pos := Vector3.ZERO, emission := 0.0) -> MeshInstance3D:
 	var mi := MeshInstance3D.new()
 	mi.mesh = mesh

@@ -103,9 +103,12 @@ var _game_mode: GameMode
 var _pivot: Node3D
 var _camera: Camera3D
 var _body: Node3D
-var _body_mesh: MeshInstance3D
+var _look: CharacterVisual
 var _hand: Node3D
-var _weapon: MeshInstance3D
+var _weapon: Node3D
+var _last_anim_pos := Vector3.ZERO
+var _anim_speed := 0.0
+var _anim_vy := 0.0
 var _horse: Node3D
 var _world: World
 var _ghost: Node3D
@@ -122,10 +125,13 @@ var _swing_tween: Tween
 var _flash_tween: Tween
 var _arm: SpringArm3D
 var _viewmodel: Node3D
+## Where the first-person weapon rests (camera space).
+const VM_HAND_POS := Vector3(0.26, -0.24, -0.45)
+const VM_HAND_ROT := Vector3(0.15, 0.1, 0)
 var _vm_hand: Node3D
-var _vm_weapon: MeshInstance3D
-var _vm_shield: MeshInstance3D
-var _shield_mesh: MeshInstance3D
+var _vm_weapon: Node3D
+var _vm_shield: Node3D
+var _shield_mesh: Node3D
 var _spell_ready: Dictionary = {}
 var _speaking_label: Label3D
 
@@ -215,6 +221,14 @@ func chest() -> Vector3:
 # --- Simulation ------------------------------------------------------------------
 
 func _physics_process(delta: float) -> void:
+	if _look and delta > 0.0:
+		# Animate from how fast we're actually moving (works for remote players too).
+		var moved := (position - _last_anim_pos) / delta
+		_last_anim_pos = position
+		_anim_speed = lerpf(_anim_speed, Vector2(moved.x, moved.z).length(), 0.3)
+		_anim_vy = lerpf(_anim_vy, moved.y, 0.3)
+		var grounded := is_on_floor() if is_multiplayer_authority() else absf(_anim_vy) < 1.5
+		_look.update_motion(_anim_speed, _anim_vy, grounded or on_ladder, mounted, blocking)
 	if is_multiplayer_authority():
 		_owner_physics(delta)
 		return
@@ -469,27 +483,22 @@ func _remote_swing(push: bool, spell := false) -> void:
 func _swing(push: bool, spell := false) -> void:
 	if Net.is_dedicated() or _body == null:
 		return
-	if _swing_tween:
-		_swing_tween.kill()
-	_hand.rotation.x = 0.0
-	_swing_tween = create_tween().set_parallel()
+	# The character's attack animation moves the arm (and the item in its hand).
+	if _look:
+		_look.play_action("cast" if spell else ("shoot" if push else "melee"))
 	if push:
-		_swing_tween.tween_property(_hand, "position:z", -0.05, 0.05)
-		_swing_tween.chain().tween_property(_hand, "position:z", -0.15, 0.2)
 		if not spell:
 			Sfx.play_at("bow", global_position, -4.0)
 	else:
-		_swing_tween.tween_property(_hand, "rotation:x", -1.5, 0.08)
-		_swing_tween.chain().tween_property(_hand, "rotation:x", 0.0, 0.18)
 		Sfx.play_at("swing", global_position, -6.0)
 	if _vm_hand:
 		var vm := create_tween()
 		if push:
-			vm.tween_property(_vm_hand, "position:z", -0.25, 0.06)
-			vm.tween_property(_vm_hand, "position:z", 0.0, 0.2)
+			vm.tween_property(_vm_hand, "position:z", VM_HAND_POS.z - 0.25, 0.06)
+			vm.tween_property(_vm_hand, "position:z", VM_HAND_POS.z, 0.2)
 		else:
 			vm.tween_property(_vm_hand, "rotation:x", -1.2, 0.08)
-			vm.tween_property(_vm_hand, "rotation:x", 0.0, 0.2)
+			vm.tween_property(_vm_hand, "rotation:x", VM_HAND_ROT.x, 0.2)
 
 
 # --- Feedback ----------------------------------------------------------------------
@@ -500,12 +509,12 @@ func _on_damaged(amount: float) -> void:
 	Sfx.play_at("hit", global_position)
 	if _flash_material == null:
 		_flash_material = Visuals.mat(Color(1, 1, 1, 0.75), 2.0)
-	_body_mesh.material_overlay = _flash_material
+	_look.flash(_flash_material)
 	if _flash_tween:
 		_flash_tween.kill()
 	_flash_tween = create_tween()
 	_flash_tween.tween_interval(0.09)
-	_flash_tween.tween_callback(func() -> void: _body_mesh.material_overlay = null)
+	_flash_tween.tween_callback(func() -> void: _look.flash(null))
 	# Floating damage number.
 	var label := Label3D.new()
 	label.text = str(roundi(amount))
@@ -528,20 +537,8 @@ func _on_death() -> void:
 	if Net.is_dedicated() or _body == null:
 		return
 	Sfx.play_at("death", global_position)
-	# A toppling copy of the body that sinks into the ground.
-	var corpse := MeshInstance3D.new()
-	corpse.mesh = _body_mesh.mesh
-	corpse.material_override = _body_mesh.material_override
-	corpse.top_level = true
-	(get_parent().get_parent() as World).fx_root.add_child(corpse)
-	corpse.global_position = global_position + Vector3(0, 0.9, 0)
-	corpse.global_rotation = Vector3(0, rotation.y, 0)
-	var t := corpse.create_tween()
-	t.tween_property(corpse, "rotation:x", -PI / 2.0, 0.35).set_ease(Tween.EASE_IN)
-	t.parallel().tween_property(corpse, "position:y", 0.4, 0.35)
-	t.tween_interval(2.0)
-	t.tween_property(corpse, "position:y", -0.6, 1.0)
-	t.tween_callback(corpse.queue_free)
+	# A copy of the character plays its death animation where we fell.
+	_look.spawn_corpse((get_parent().get_parent() as World).fx_root, _look.global_transform)
 
 
 # --- Visuals ---------------------------------------------------------------------
@@ -550,21 +547,13 @@ func _build_visuals() -> void:
 	var tc := GameData.team_color(team)
 	_body = Node3D.new()
 	add_child(_body)
-	var capsule := CapsuleMesh.new()
-	capsule.radius = 0.4
-	capsule.height = 1.8
-	_body_mesh = Visuals.mesh_instance(capsule, tc, Vector3(0, 0.9, 0))
-	_body.add_child(_body_mesh)
-	# Visor shows which way they face.
-	_body.add_child(Visuals.box(Vector3(0.5, 0.12, 0.2), Color(0.15, 0.15, 0.18), Vector3(0, 1.5, -0.33)))
-
+	_look = CharacterVisual.new()
+	_body.add_child(_look)
+	_look.setup(peer_id, team)
 	_hand = Node3D.new()
-	_hand.position = Vector3(0.45, 1.1, -0.15)
-	_body.add_child(_hand)
-	_weapon = MeshInstance3D.new()
-	_hand.add_child(_weapon)
-	_shield_mesh = Visuals.box(Vector3(0.08, 0.8, 0.6), Color.WHITE)
-	_body.add_child(_shield_mesh)
+	(_look.right_hand if _look.right_hand else _body).add_child(_hand)
+	_shield_mesh = Node3D.new()
+	(_look.left_hand if _look.left_hand else _body).add_child(_shield_mesh)
 
 	var label := Label3D.new()
 	label.text = display_name
@@ -573,7 +562,7 @@ func _build_visuals() -> void:
 	label.pixel_size = 0.006
 	label.outline_size = 8
 	label.modulate = tc.lerp(Color.WHITE, 0.5)
-	label.position.y = 2.25
+	label.position.y = 2.4
 	label.visible = not is_local()  # your own name would float in front of the camera
 	_body.add_child(label)
 	_speaking_label = Label3D.new()
@@ -583,13 +572,11 @@ func _build_visuals() -> void:
 	_speaking_label.pixel_size = 0.006
 	_speaking_label.outline_size = 6
 	_speaking_label.modulate = Color(0.6, 1.0, 0.6)
-	_speaking_label.position.y = 2.55
+	_speaking_label.position.y = 2.7
 	_speaking_label.visible = false
 	_body.add_child(_speaking_label)
 
-	_horse = Node3D.new()
-	_horse.add_child(Visuals.box(Vector3(0.9, 0.9, 2.0), Color(0.45, 0.3, 0.18), Vector3(0, 0.75, 0)))
-	_horse.add_child(Visuals.box(Vector3(0.5, 0.8, 0.7), Color(0.42, 0.28, 0.16), Vector3(0, 1.3, -1.1)))
+	_horse = _make_horse(tc)
 	add_child(_horse)
 
 	_refresh_weapon()
@@ -601,50 +588,53 @@ func _build_visuals() -> void:
 
 
 func _refresh_weapon() -> void:
-	if _weapon == null:
+	if _hand == null or Net.is_dedicated():
 		return
-	var def := GameData.item(equipped)
-	var kind: String = def.get("kind", "fists")
-	if kind == "fists" or kind == "spell":
-		_weapon.visible = false
+	var kind: String = GameData.item(equipped).get("kind", "fists")
+	if _weapon:
+		_weapon.queue_free()
+		_weapon = null
+	if kind != "fists":
+		_weapon = CharacterVisual.make_held(equipped, team)
+		_hand.add_child(_weapon)
+		if is_local():
+			_set_layer(_weapon, BODY_LAYER)
+	if _vm_hand:
 		if _vm_weapon:
-			_vm_weapon.visible = kind == "spell"
-			if kind == "spell":
-				var orb := SphereMesh.new()
-				orb.radius = 0.06
-				orb.height = 0.12
-				_vm_weapon.mesh = orb
-				_vm_weapon.material_override = Visuals.mat(def.get("color", Color.WHITE), 0.8)
-		return
-	_weapon.visible = true
-	var m := BoxMesh.new()
-	_weapon.rotation = Vector3.ZERO
-	match kind:
-		"weapon", "tool":
-			m.size = Vector3(0.1, 0.1, 1.0)
-			_weapon.position = Vector3(0, 0, -0.45)
-		"ranged":
-			m.size = Vector3(0.07, 1.2, 0.07)
-			_weapon.position = Vector3(-0.1, 0.15, -0.4)
-		"structure":
-			m.size = Vector3(0.35, 0.35, 0.35)
-			_weapon.position = Vector3(0, 0, -0.2)
-		_:
-			m.size = Vector3(0.18, 0.28, 0.18)
-			_weapon.position = Vector3(0, 0, -0.2)
-	_weapon.mesh = m
-	_weapon.material_override = Visuals.mat(def.get("color", Color.WHITE))
-	if _vm_weapon:
-		_vm_weapon.mesh = m
-		_vm_weapon.material_override = _weapon.material_override
-		_vm_weapon.visible = true
+			_vm_weapon.queue_free()
+			_vm_weapon = null
+		if kind != "fists":
+			_vm_weapon = CharacterVisual.make_held(equipped, team)
+			_vm_hand.add_child(_vm_weapon)
+
+
+## A simple low-poly horse with a team-colored saddle blanket.
+func _make_horse(tc: Color) -> Node3D:
+	var horse := Node3D.new()
+	var coat := Color(0.42, 0.28, 0.16)
+	var dark := Color(0.2, 0.14, 0.09)
+	horse.add_child(Visuals.box(Vector3(0.7, 0.75, 1.7), coat, Vector3(0, 1.15, 0)))
+	var neck := Visuals.box(Vector3(0.38, 0.85, 0.4), coat, Vector3(0, 1.6, -0.85))
+	neck.rotation.x = -0.6
+	horse.add_child(neck)
+	horse.add_child(Visuals.box(Vector3(0.32, 0.32, 0.65), coat, Vector3(0, 1.95, -1.25)))
+	horse.add_child(Visuals.box(Vector3(0.1, 0.5, 0.42), dark, Vector3(0, 1.85, -0.85)))  # mane
+	for x in [-0.25, 0.25]:
+		for z in [-0.65, 0.65]:
+			horse.add_child(Visuals.box(Vector3(0.16, 0.85, 0.16), coat, Vector3(x, 0.42, z)))
+			horse.add_child(Visuals.box(Vector3(0.18, 0.12, 0.18), dark, Vector3(x, 0.06, z)))
+	var tail := Visuals.box(Vector3(0.1, 0.6, 0.1), dark, Vector3(0, 1.1, 0.95))
+	tail.rotation.x = 0.4
+	horse.add_child(tail)
+	horse.add_child(Visuals.box(Vector3(0.76, 0.06, 0.7), tc, Vector3(0, 1.54, 0.05)))
+	return horse
 
 
 func _refresh_mount() -> void:
 	if _horse == null:
 		return
 	_horse.visible = mounted
-	_body.position.y = 0.7 if mounted else 0.0
+	_body.position.y = 0.95 if mounted else 0.0
 
 
 func _build_camera() -> void:
@@ -665,15 +655,11 @@ func _build_camera() -> void:
 	_viewmodel = Node3D.new()
 	_camera.add_child(_viewmodel)
 	_vm_hand = Node3D.new()
-	_vm_hand.position = Vector3(0.26, -0.24, -0.5)
-	_vm_hand.scale = Vector3.ONE * 0.45  # weapon meshes are body-sized
+	_vm_hand.position = VM_HAND_POS
+	_vm_hand.rotation = VM_HAND_ROT
+	_vm_hand.scale = Vector3.ONE * 0.32
 	_viewmodel.add_child(_vm_hand)
-	_vm_weapon = MeshInstance3D.new()
-	_vm_weapon.position = Vector3(0, 0, -0.25)
-	_vm_weapon.cast_shadow = GeometryInstance3D.SHADOW_CASTING_SETTING_OFF
-	_vm_hand.add_child(_vm_weapon)
-	_vm_shield = Visuals.box(Vector3(0.2, 0.27, 0.03), Color.WHITE)
-	_vm_shield.cast_shadow = GeometryInstance3D.SHADOW_CASTING_SETTING_OFF
+	_vm_shield = Node3D.new()
 	_viewmodel.add_child(_vm_shield)
 	_refresh_weapon()
 	_refresh_shield()
@@ -709,19 +695,27 @@ func _best_shield() -> String:
 	return ""
 
 
-## Shield on the left arm, swung in front when blocking.
+## Shield on the left arm (the "holding-left" animation raises it when blocking), and
+## in first person on the left of the view.
 func _refresh_shield() -> void:
-	var color: Color = GameData.item(shield_item).get("color", Color.WHITE)
 	if _shield_mesh:
-		_shield_mesh.visible = shield_item != ""
-		_shield_mesh.material_override = Visuals.mat(color)
-		_shield_mesh.position = Vector3(-0.2, 1.3, -0.5) if blocking else Vector3(-0.48, 1.05, -0.05)
-		_shield_mesh.rotation.y = PI * 0.5 if blocking else 0.0
+		for c in _shield_mesh.get_children():
+			c.queue_free()
+		if shield_item != "":
+			var model := CharacterVisual.make_held(shield_item, team)
+			model.rotation.y = PI * 0.5  # flat against the forearm
+			_shield_mesh.add_child(model)
+			if is_local():
+				_set_layer(model, BODY_LAYER)
 	if _vm_shield:
+		for c in _vm_shield.get_children():
+			c.queue_free()
 		_vm_shield.visible = shield_item != ""
-		_vm_shield.material_override = Visuals.mat(color)
-		_vm_shield.position = Vector3(-0.09, -0.1, -0.42) if blocking else Vector3(-0.32, -0.3, -0.55)
-		_vm_shield.rotation = Vector3.ZERO if blocking else Vector3(0.2, 0.5, 0.1)
+		if shield_item != "":
+			_vm_shield.add_child(CharacterVisual.make_held(shield_item, team))
+		_vm_shield.position = Vector3(-0.1, -0.12, -0.5) if blocking else Vector3(-0.36, -0.3, -0.6)
+		_vm_shield.rotation = Vector3.ZERO if blocking else Vector3(0.25, 0.7, 0.1)
+		_vm_shield.scale = Vector3.ONE * (0.4 if blocking else 0.26)
 
 
 func _update_ghost() -> void:
