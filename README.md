@@ -12,6 +12,12 @@ drawbridges and battlements make attacking and defending a base a real fight.
 
 ![The forest by the river](docs/screenshots/forest_middle.png)
 
+## Spells and skills
+
+![The spellbook](docs/regicide-spells.png)
+
+![The skill tree](docs/regicide-skills.png)
+
 ## Running it
 
 1. Install [Godot 4.4](https://godotengine.org/download) (standard build, not .NET).
