@@ -1,0 +1,26 @@
+[gd_scene load_steps=3 format=3]
+
+[ext_resource type="Script" path="res://scripts/world/world.gd" id="1_world"]
+[ext_resource type="Script" path="res://scripts/game/game_mode.gd" id="2_mode"]
+
+[node name="World" type="Node3D"]
+script = ExtResource("1_world")
+
+[node name="GameMode" type="Node" parent="."]
+script = ExtResource("2_mode")
+
+[node name="Resources" type="Node3D" parent="."]
+
+[node name="Structures" type="Node3D" parent="."]
+
+[node name="Players" type="Node3D" parent="."]
+
+[node name="Crowns" type="Node3D" parent="."]
+
+[node name="Fx" type="Node3D" parent="."]
+
+[node name="PlayerSpawner" type="MultiplayerSpawner" parent="."]
+spawn_path = NodePath("../Players")
+
+[node name="StructureSpawner" type="MultiplayerSpawner" parent="."]
+spawn_path = NodePath("../Structures")
