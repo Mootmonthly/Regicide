@@ -4,6 +4,19 @@ A dedicated server runs the match on its own (no player window) so friends or th
 can join any time. It runs on Linux. Players connect with the normal game: **Server
 address** = the server's IP, then **Join**.
 
+## Quickest: a cloud server that sets itself up
+
+1. Make an account with a VPS provider, e.g. [Hetzner Cloud](https://www.hetzner.com/cloud)
+   (roughly €7–15/month for 4 vCPU / 8 GB) or DigitalOcean.
+2. Create a server: **Ubuntu 24.04**, 4 vCPU / 8 GB, in a region near your players.
+3. Find the **Cloud config / User data** box (under advanced options) and paste the
+   contents of [`server/cloud-init.yaml`](../server/cloud-init.yaml).
+4. Create it. A couple of minutes later the Regicide server is running. Players join with
+   the server's public IP shown in the provider's dashboard.
+5. If the provider has a firewall for the server, allow inbound **UDP 24565**.
+
+To change settings later, SSH in and edit `/opt/regicide/server.cfg` (see below).
+
 ## 1. Get a machine
 
 Any always-on Linux box works: a VPS (Hetzner, DigitalOcean, Vultr, OVH, Linode…), a home
