@@ -11,11 +11,34 @@ const ANIMATION_FILES := ["General", "MovementBasic", "MovementAdvanced", "Comba
 const HEIGHT := 1.8
 const LOOPING := ["Idle_A", "Idle_B", "Walking_A", "Walking_B", "Running_A", "Running_B", "Jump_Idle",
 	"Melee_Blocking", "Ranged_Bow_Idle", "Ranged_Bow_Aiming_Idle", "Ranged_1H_Aiming", "Crouching",
-	"Melee_Unarmed_Idle", "Running_HoldingBow", "Walking_Backwards"]
+	"Melee_Unarmed_Idle", "Running_HoldingBow", "Walking_Backwards", "Running_Strafe_Left", "Running_Strafe_Right"]
+## Movement animations the legs blend between (the AnimationTree's "loco" states).
+const LOCO_STATES := ["Idle_A", "Ranged_Bow_Idle", "Ranged_1H_Aiming", "Walking_A", "Walking_Backwards",
+	"Running_A", "Running_HoldingBow", "Jump_Idle", "Crouching"]
+## Bones an upper-body action (swing, shot, cast, block) takes over, so the legs keep
+## walking or running underneath it.
+const UPPER_BONES := ["spine", "chest", "head", "upperarm.l", "lowerarm.l", "wrist.l", "hand.l", "handslot.l",
+	"upperarm.r", "lowerarm.r", "wrist.r", "hand.r", "handslot.r"]
+const SKELETON_PATH := "Rig_Medium/Skeleton3D"
+## Most the body turns toward a sideways move (radians, about 50 degrees).
+const MAX_BODY_TURN := 0.87
+## How long each action plays, in seconds (animations are sped up to fit).
+## Part of an attack animation to play, [start, end] in its own seconds: just before the
+## strike to the end of the follow-through, so the blow lands right after the click (the
+## game deals damage at once) instead of after a long wind-up. Measured from where the
+## hand moves fastest.
+const CLIPS := {
+	"Melee_1H_Attack_Slice_Diagonal": [0.30, 0.95],  # raised by 0.14 s, strikes 0.33-0.48 s
+	"Melee_1H_Attack_Chop": [0.45, 1.05],  # overhead by 0.36 s, strikes 0.51-0.61 s
+	"Melee_1H_Attack_Stab": [0.26, 1.0],  # drawn back by 0.30 s, thrusts 0.30-0.46 s
+	"Melee_Unarmed_Attack_Punch_A": [0.25, 0.9],
+	"Use_Item": [0.0, 1.2],
+}
+const ACTION_TIME := {"melee": 0.55, "shoot": 0.5, "cast": 0.55, "use": 0.8, "hit": 0.4, "build": 0.6, "dash": 0.3, "land": 0.3}
 ## Items carried upright in the right hand (see ArmHold).
 const HELD_UPRIGHT := ["iron_sword", "stone_axe", "pickaxe", "wooden_club", "war_hammer"]
 ## (The horizontal slice is left out: it turns the wrist so the flat of the blade leads.)
-const SWORD_SWINGS := ["Melee_1H_Attack_Slice_Diagonal", "Melee_1H_Attack_Chop"]
+const SWORD_SWINGS := ["Melee_1H_Attack_Slice_Diagonal", "Melee_1H_Attack_Chop", "Melee_1H_Attack_Stab"]
 
 ## How each item is held. KayKit models are made for the hand slot as they are; other
 ## models stand upright (+Y) with the grip a little above their bottom. "fp_base" then
@@ -56,7 +79,15 @@ const SHADOW_RANGE := 40.0
 const HELD_RANGE := 70.0
 const DRAW_RANGE := 220.0
 
-var anim: AnimationPlayer
+## Blend tree: legs (loco states, crossfaded) -> block layer (upper body) -> upper-body
+## one-shot (attacks while moving) -> full-body one-shot (attacks standing still, dodge,
+## landing). Advanced manually by the level-of-detail code.
+var anim: AnimationTree
+var _tree: AnimationNodeBlendTree
+var _loco := ""
+var _block := 0.0
+var _airborne := 0.0
+var _moving := false
 var right_hand: Node3D  ## held item goes here (meters, KayKit hand-slot orientation)
 var left_hand: Node3D  ## shield goes here
 var held_item := ""  ## what's in the right hand, for picking animations
@@ -64,7 +95,6 @@ var team := 0
 var _model: Node3D
 var _meshes: Array[MeshInstance3D] = []
 var _one_shot_until := 0.0
-var _current := ""
 var _swing := 0
 var _hold: ArmHold
 var _anim_wait := 0.0  ## time since the animation last advanced
@@ -104,9 +134,18 @@ func setup(_peer_id: int, p_team: int) -> void:
 	team = p_team
 	_model = _instantiate()
 	add_child(_model)
-	anim = _model.find_child("AnimationPlayer", true, false) as AnimationPlayer
+	var player_node := _model.find_child("AnimationPlayer", true, false)
+	if player_node:
+		player_node.free()  # the AnimationTree below drives this character
+	anim = AnimationTree.new()
+	anim.name = "AnimationTree"
+	_model.add_child(anim)
+	anim.add_animation_library("", animation_library())
+	_tree = _build_tree()
+	anim.tree_root = _tree
 	anim.callback_mode_process = AnimationMixer.ANIMATION_CALLBACK_MODE_PROCESS_MANUAL
-	anim.play("Idle_A")
+	anim.active = true
+	_set_loco("Idle_A")
 	_lod_check = randf() * 0.25  # spread the checks over frames
 	for mi in _model.find_children("*", "MeshInstance3D", true, false):
 		_meshes.append(mi as MeshInstance3D)
@@ -347,56 +386,143 @@ static func apply_team_colors(node: Node, p_team: int, tint_steel := true) -> vo
 				mi.set_surface_override_material(s, mat)
 
 
-## Pick the looping animation for the current movement.
-func update_motion(horizontal_speed: float, vertical_speed: float, on_ground: bool, mounted: bool, blocking: bool) -> void:
+func _build_tree() -> AnimationNodeBlendTree:
+	var bt := AnimationNodeBlendTree.new()
+	var loco := AnimationNodeTransition.new()
+	loco.xfade_time = 0.18
+	bt.add_node("loco", loco)
+	for i in LOCO_STATES.size():
+		var state: String = LOCO_STATES[i]
+		loco.add_input(state)
+		var a := AnimationNodeAnimation.new()
+		a.animation = state
+		bt.add_node("s_" + state, a)
+		bt.connect_node("loco", i, "s_" + state)
+	bt.add_node("loco_speed", AnimationNodeTimeScale.new())
+	bt.connect_node("loco_speed", 0, "loco")
+	var block := AnimationNodeBlend2.new()
+	_filter_upper(block)
+	bt.add_node("block", block)
+	var block_anim := AnimationNodeAnimation.new()
+	block_anim.animation = "Melee_Blocking"
+	bt.add_node("block_anim", block_anim)
+	bt.connect_node("block", 0, "loco_speed")
+	bt.connect_node("block", 1, "block_anim")
+	var prev := "block"
+	for layer: String in ["upper", "full"]:
+		var shot := AnimationNodeOneShot.new()
+		shot.fadein_time = 0.06
+		shot.fadeout_time = 0.18
+		if layer == "upper":
+			_filter_upper(shot)
+		bt.add_node(layer, shot)
+		bt.add_node(layer + "_anim", AnimationNodeAnimation.new())
+		bt.add_node(layer + "_speed", AnimationNodeTimeScale.new())
+		bt.connect_node(layer + "_speed", 0, layer + "_anim")
+		bt.connect_node(layer, 0, prev)
+		bt.connect_node(layer, 1, layer + "_speed")
+		prev = layer
+	bt.connect_node("output", 0, prev)
+	return bt
+
+
+static func _filter_upper(node: AnimationNode) -> void:
+	node.filter_enabled = true
+	for bone: String in UPPER_BONES:
+		node.set_filter_path(NodePath("%s:%s" % [SKELETON_PATH, bone]), true)
+
+
+func _set_loco(state: String) -> void:
+	if state == _loco:
+		return
+	_loco = state
+	anim.set("parameters/loco/transition_request", state)
+
+
+## Pick the legs' animation from how the player is moving (`local_velocity`: x is right,
+## y is forward, in m/s), and blend the block pose on the upper body.
+func update_motion(horizontal_speed: float, vertical_speed: float, on_ground: bool, mounted: bool, blocking: bool,
+		local_velocity := Vector2.ZERO) -> void:
 	if anim == null:
 		return
+	var dt := get_physics_process_delta_time()
 	var acting := Time.get_ticks_msec() / 1000.0 < _one_shot_until
 	if _hold:
 		var hold := not acting and not blocking and held_item in HELD_UPRIGHT
-		_hold.influence = move_toward(_hold.influence, 1.0 if hold else 0.0, get_process_delta_time() * 6.0)
+		_hold.influence = move_toward(_hold.influence, 1.0 if hold else 0.0, dt * 6.0)
 		_hold.active = _hold.influence > 0.0
-	if acting:
-		return
+	_block = move_toward(_block, 1.0 if blocking else 0.0, dt * 8.0)
+	anim.set("parameters/block/blend_amount", _block)
+	# Landing from a real fall: a quick full-body landing when standing still.
+	if not on_ground and absf(vertical_speed) > 1.5:
+		_airborne += dt
+	elif on_ground:
+		if _airborne > 0.45 and horizontal_speed < 2.0 and not mounted:
+			play_action("land")
+		_airborne = 0.0
 	var bow := held_item == "shortbow"
 	var want := "Ranged_Bow_Idle" if bow else ("Ranged_1H_Aiming" if held_item == "crossbow" else "Idle_A")
+	var speed_scale := 1.0
+	_moving = horizontal_speed > 0.6
 	if mounted:
 		want = "Crouching"
-	elif not on_ground and absf(vertical_speed) > 1.5:
+	elif _airborne > 0.15:
 		want = "Jump_Idle"
-	elif blocking:
-		want = "Melee_Blocking"
-	elif horizontal_speed > 7.0:
-		want = "Running_HoldingBow" if bow else "Running_A"
-	elif horizontal_speed > 0.6:
-		want = "Walking_A"
-	if want != _current:
-		_current = want
-		anim.play(want, 0.15)
-	if want == "Walking_A":
-		anim.speed_scale = clampf(horizontal_speed / 3.0, 0.6, 1.8)
-	elif want.begins_with("Running"):
-		anim.speed_scale = clampf(horizontal_speed / 7.5, 0.8, 1.5)
-	else:
-		anim.speed_scale = 1.0
+	var turn := 0.0
+	if _moving and not mounted:
+		var dir := local_velocity.normalized() if local_velocity.length() > 0.3 else Vector2(0, 1)
+		# Sideways and diagonal moves: turn the body partway toward the way we're going
+		# (the head and aim stay with the player), and use the normal walk or run.
+		if dir.y < -0.3:
+			turn = clampf(atan2(dir.x, -dir.y), -MAX_BODY_TURN, MAX_BODY_TURN)
+		else:
+			turn = clampf(-atan2(dir.x, dir.y), -MAX_BODY_TURN, MAX_BODY_TURN)
+	rotation.y = lerp_angle(rotation.y, turn, clampf(dt * 10.0, 0.0, 1.0))
+	if _moving and not mounted and _airborne <= 0.15:
+		var dir := local_velocity.normalized() if local_velocity.length() > 0.3 else Vector2(0, 1)
+		if dir.y < -0.3:
+			want = "Walking_Backwards"
+			speed_scale = clampf(horizontal_speed / 2.5, 0.7, 2.0)
+		elif horizontal_speed > 4.5:
+			want = "Running_HoldingBow" if bow else "Running_A"
+			speed_scale = clampf(horizontal_speed / 7.5, 0.8, 1.5)
+		else:
+			want = "Walking_A"
+			speed_scale = clampf(horizontal_speed / 3.0, 0.6, 1.8)
+	_set_loco(want)
+	anim.set("parameters/loco_speed/scale", speed_scale)
 
 
-## One-shot action animation: "melee", "shoot", "cast", "use", "hit" or "build".
+## One-shot action: "melee", "shoot", "cast", "use", "hit", "build", "dash" or "land".
+## Attacks, shots, casts and flinches use the upper body only while moving, so the legs
+## keep running; standing still (and for dodges and landings) the whole body acts.
 func play_action(kind: String) -> void:
 	if anim == null or (kind == "hit" and Time.get_ticks_msec() / 1000.0 < _one_shot_until):
 		return
 	var name := _action_animation(kind)
 	if name == "" or not anim.has_animation(name):
 		return
-	var speed := 1.0 if kind == "hit" else 1.7
-	anim.speed_scale = speed
+	var length := anim.get_animation(name).length
+	var clip: Array = CLIPS.get(name, [0.0, length])
+	var duration: float = ACTION_TIME.get(kind, 0.6)
+	var whole_body := kind in ["dash", "land", "build"] or (not _moving and kind in ["melee", "use"])
+	var layer := "full" if whole_body else "upper"
+	var other := "upper" if whole_body else "full"
+	var node := _tree.get_node(layer + "_anim") as AnimationNodeAnimation
+	node.animation = name
+	node.use_custom_timeline = true
+	node.start_offset = clip[0]
+	node.timeline_length = clip[1] - clip[0]
+	node.stretch_time_scale = false
+	node.loop_mode = Animation.LOOP_NONE
+	anim.set("parameters/%s_speed/scale" % layer, (clip[1] - clip[0]) / duration)
+	anim.set("parameters/%s/request" % other, AnimationNodeOneShot.ONE_SHOT_REQUEST_FADE_OUT)
+	anim.set("parameters/%s/request" % layer, AnimationNodeOneShot.ONE_SHOT_REQUEST_FIRE)
 	if _hold:
 		_hold.influence = 0.0
 		_hold.active = false
-	anim.play(name, 0.05)
-	anim.seek(0.0, true)
-	_current = name
-	_one_shot_until = Time.get_ticks_msec() / 1000.0 + anim.get_animation(name).length / speed * 0.85
+	_one_shot_until = Time.get_ticks_msec() / 1000.0 + duration * 0.9
+	_anim_wait = _anim_step  # show the start of the action right away
 
 
 func _action_animation(kind: String) -> String:
@@ -405,11 +531,7 @@ func _action_animation(kind: String) -> String:
 			match held_item:
 				"", "fists":
 					return "Melee_Unarmed_Attack_Punch_A"
-				"stone_axe":
-					return "Chop"
-				"pickaxe":
-					return "Pickaxe"
-				"wooden_club", "war_hammer":
+				"stone_axe", "pickaxe", "wooden_club", "war_hammer":
 					return "Melee_1H_Attack_Chop"
 			_swing += 1
 			return SWORD_SWINGS[_swing % SWORD_SWINGS.size()]
@@ -423,6 +545,10 @@ func _action_animation(kind: String) -> String:
 			return "Hit_A"
 		"build":
 			return "Interact"
+		"dash":
+			return "Dodge_Forward"
+		"land":
+			return "Jump_Land"
 	return ""
 
 

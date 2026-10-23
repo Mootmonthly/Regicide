@@ -133,6 +133,7 @@ var _weapon: Node3D
 var _last_anim_pos := Vector3.ZERO
 var _anim_speed := 0.0
 var _anim_vy := 0.0
+var _anim_dir := Vector2.ZERO  ## smoothed movement direction relative to facing (x right, y forward)
 var _horse: HorseVisual
 var _world: World
 var _ghost: Node3D
@@ -195,6 +196,7 @@ func _ready() -> void:
 	sync_yaw = rotation.y
 	if is_local():
 		_build_camera()
+		_game_mode.hit_confirmed.connect(func(killed: bool) -> void: shake(0.06 if killed else 0.03))
 		_ghost_ok = Visuals.mat(Color(0.3, 1.0, 0.4, 0.35))
 		_ghost_bad = Visuals.mat(Color(1.0, 0.3, 0.3, 0.35))
 		Input.mouse_mode = Input.MOUSE_MODE_CAPTURED
@@ -370,6 +372,8 @@ func _dash_fx() -> void:
 		return
 	_world.debris(global_position + Vector3(0, 0.3, 0), Color(0.75, 0.7, 0.6), 8)
 	Sfx.play_at("blink", global_position, -6.0)
+	if _look:
+		_look.play_action("dash")
 
 
 ## Show the "talking" marker over this player (voice chat).
@@ -394,7 +398,9 @@ func _physics_process(delta: float) -> void:
 		_anim_speed = lerpf(_anim_speed, Vector2(moved.x, moved.z).length(), 0.3)
 		_anim_vy = lerpf(_anim_vy, moved.y, 0.3)
 		var grounded := is_on_floor() if is_multiplayer_authority() else absf(_anim_vy) < 1.5
-		_look.update_motion(_anim_speed, _anim_vy, grounded or on_ladder, mounted, blocking)
+		var local := global_basis.inverse() * Vector3(moved.x, 0.0, moved.z)
+		_anim_dir = _anim_dir.lerp(Vector2(local.x, -local.z), 0.3)
+		_look.update_motion(_anim_speed, _anim_vy, grounded or on_ladder, mounted, blocking, _anim_dir)
 		if mounted and _horse:
 			_horse.update_motion(_anim_speed)
 	if is_multiplayer_authority():
@@ -481,6 +487,7 @@ func _owner_physics(delta: float) -> void:
 func _process(_delta: float) -> void:
 	if not is_local() or _game_mode == null:
 		return
+	_update_shake(_delta)
 	interact_target = _world.interactable_near(position, team) if alive and _world else null
 	# Keep the equipped item valid as the inventory changes.
 	var bar := _game_mode.hotbar_items(build_page)
@@ -699,10 +706,35 @@ func _swing(push: bool, spell := false) -> void:
 
 # --- Feedback ----------------------------------------------------------------------
 
+## Camera shake (your hits landing, getting hit). Moves the view, not the aim.
+var _shake := 0.0
+
+
+func shake(strength: float) -> void:
+	_shake = maxf(_shake, strength)
+
+
+func _update_shake(delta: float) -> void:
+	if _camera == null:
+		return
+	if _shake <= 0.0005:
+		_camera.h_offset = 0.0
+		_camera.v_offset = 0.0
+		return
+	_shake = move_toward(_shake, 0.0, delta * 0.5)
+	_camera.h_offset = randf_range(-_shake, _shake)
+	_camera.v_offset = randf_range(-_shake, _shake)
+
+
 func _on_damaged(amount: float) -> void:
 	if Net.is_dedicated() or _body == null:
 		return
 	Sfx.play_at("hit", global_position)
+	# A burst of sparks where the blow landed.
+	if _world:
+		_world.debris(chest(), Color(1.0, 0.75, 0.35), 5)
+	if is_local():
+		shake(clampf(amount / 250.0, 0.04, 0.14))
 	if _flash_material == null:
 		_flash_material = Visuals.mat(Color(1, 1, 1, 0.75), 2.0)
 	_look.flash(_flash_material)
