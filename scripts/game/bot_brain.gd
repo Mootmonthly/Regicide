@@ -43,9 +43,9 @@ const SHOPPING := {
 }
 ## Spells each role learns when it has the gold and magic ore, in order.
 const SPELLS := {
-	Role.GATHERER: ["heal_aura", "arcane_ward", "spectral_warriors", "meteor"],
-	Role.ATTACKER: ["gust", "shadow_cloak", "battle_cry", "spectral_warriors", "fireball"],
-	Role.DEFENDER: ["meteor", "thunderclap", "frost_bolt", "siphon_life", "lightning", "gust"],
+	Role.GATHERER: ["magic_missiles", "heal_aura", "arcane_ward", "spectral_warriors", "meteor"],
+	Role.ATTACKER: ["magic_missiles", "gust", "shadow_cloak", "battle_cry", "spectral_warriors", "fireball"],
+	Role.DEFENDER: ["chain_hook", "meteor", "thunderclap", "frost_bolt", "siphon_life", "lightning", "gust"],
 }
 const MELEE_PREFERENCE := ["war_hammer", "iron_sword", "wooden_club", "stone_axe", "pickaxe"]
 ## Resources a role keeps on hand once its wishlist is done (building is paid on placement).
@@ -711,6 +711,10 @@ func _try_spell(rec: PlayerRecord, foe: Node3D, dist: float) -> bool:
 				want = player.health < player.max_health * 0.6
 			"thunderclap":
 				want = dist < 4.0
+			"magic_missiles":
+				want = dist > 3.0 and dist < float(def["range"]) * 0.9
+			"chain_hook":
+				want = (carrier and dist < float(def["range"]) * 0.9) or (dist > 7.0 and dist < 16.0)
 			"siphon_life":
 				want = dist < float(def["range"]) * 0.8 and player.health < player.max_health * 0.85
 			"battle_cry":

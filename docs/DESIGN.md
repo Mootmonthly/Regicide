@@ -171,6 +171,8 @@ Casting costs mana (100 max, +2.5/s; mana potions restore 60).
 | Battle Cry | 220g + 4 ore | 50 | You and teammates within 12 m: +25% speed, +20% damage for 8 s. 30 s recharge |
 | Shadow Cloak | 200g + 4 ore | 45 | Invisible to enemies (and their bots, ballistas and warriors) for 10 s; allies see a faint shape. Attacking, casting or grabbing a crown reveals you; can't be cast while carrying one. 25 s recharge |
 | Arcane Ward | 150g + 3 ore | 40 | A bubble soaks up the next 40 damage (lasts 12 s). 20 s recharge |
+| Magic Missiles | 100g + 1 ore | 35 | 3 missiles, 12 damage each (about 33 to walls); they curve toward enemies near their path and skim over slopes. 10 s recharge. *Designed in the Spell Forge.* |
+| Chain Hook | 170g + 3 ore | 35 | 12 damage to the enemy you aim at (or an enemy warrior) and drags them 6 m toward you, stopping at arm's length; walls stop the pull. 10 s recharge. *Designed in the Spell Forge.* |
 
 Each spell has its own recharge; casting only keeps your hands busy for up to 1 s.
 

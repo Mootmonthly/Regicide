@@ -534,6 +534,27 @@ func fx_spell(kind: String, from: Vector3, to: Vector3) -> void:
 				get_tree().create_timer(k * 0.06).timeout.connect(func() -> void:
 					_projectile(mi, from + jitter, to, 28.0))
 			Sfx.play_at("frost", from, -2.0)
+		"hook":
+			# A chain shoots out to the target, then reels back in.
+			var length := from.distance_to(to)
+			if length < 0.1:
+				return
+			var chain := Visuals.box(Vector3(0.07, 0.07, 1.0), Color(0.45, 0.47, 0.5))
+			chain.cast_shadow = GeometryInstance3D.SHADOW_CASTING_SETTING_OFF
+			var pivot := Node3D.new()
+			fx_root.add_child(pivot)
+			pivot.global_position = from
+			pivot.look_at(to)
+			pivot.add_child(chain)
+			chain.position = Vector3(0, 0, -0.5)
+			pivot.scale = Vector3(1, 1, 0.01)
+			var t := pivot.create_tween()
+			t.tween_property(pivot, "scale", Vector3(1, 1, length), 0.12)
+			t.tween_property(pivot, "scale", Vector3(1, 1, 0.01), 0.2)
+			t.tween_callback(pivot.queue_free)
+			Sfx.play_at("swing", from, 2.0)
+			get_tree().create_timer(0.12).timeout.connect(func() -> void:
+				debris(to, Color(0.48, 0.6, 0.23), 8))
 		"cloak":
 			debris(from, Color(0.3, 0.25, 0.45), 14)
 			Sfx.play_at("blink", from, -4.0)
@@ -690,6 +711,36 @@ func fx_fireball(from: Vector3, to: Vector3, radius: float) -> void:
 	t.tween_property(boom, "scale", Vector3.ONE * radius, 0.35)
 	t.tween_property(mat, "albedo_color:a", 0.0, 0.35)
 	t.chain().tween_callback(boom.queue_free)
+
+
+## Magic Missiles: glowing bolts that follow the paths the server simulated.
+@rpc("authority", "call_local", "unreliable")
+func fx_missiles(paths: Array, delays: Array, speed: float, color: Color) -> void:
+	if Net.is_dedicated():
+		return
+	for k in paths.size():
+		var points: PackedVector3Array = paths[k]
+		if points.size() < 2:
+			continue
+		var orb := SphereMesh.new()
+		orb.radius = 0.16
+		orb.height = 0.32
+		var mi := Visuals.mesh_instance(orb, color.lightened(0.2), Vector3.ZERO, 1.6)
+		mi.cast_shadow = GeometryInstance3D.SHADOW_CASTING_SETTING_OFF
+		mi.visible = false
+		fx_root.add_child(mi)
+		mi.global_position = points[0]
+		var t := mi.create_tween()
+		t.tween_interval(float(delays[k]))
+		t.tween_callback(func() -> void:
+			mi.visible = true
+			Sfx.play_at("frost", points[0], -4.0))
+		for i in range(1, points.size()):
+			t.tween_property(mi, "global_position", points[i], maxf(points[i - 1].distance_to(points[i]) / speed, 0.01))
+		var last: Vector3 = points[points.size() - 1]
+		t.tween_callback(func() -> void:
+			debris(last, color.lightened(0.3), 6)
+			mi.queue_free())
 
 
 ## An expanding flat ring (thunderclap, battle cry).

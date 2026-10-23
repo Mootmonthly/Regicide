@@ -701,6 +701,10 @@ func _cast_spell(rec: PlayerRecord, p: Player, id: String, def: Dictionary, aim_
 			ok = _cast_spectral(rec, p, def)
 		"thunderclap":
 			_cast_thunderclap(rec, p, def)
+		"magic_missiles":
+			_cast_missiles(rec, p, def, aim_dir)
+		"chain_hook":
+			_cast_hook(rec, p, def, aim_dir)
 		"siphon_life":
 			_cast_siphon(rec, p, def, aim_dir)
 		"battle_cry":
@@ -911,6 +915,144 @@ func _cast_meteor(rec: PlayerRecord, caster: Player, def: Dictionary, aim_dir: V
 		for s in world.get_structures():
 			if s.team != team and s.closest_point(impact).distance_to(impact) <= radius:
 				damage_structure(s, def["structure_damage"]))
+
+
+## Magic Missiles: a small volley that curves a little toward enemies near its path.
+## Each missile's flight is simulated now; its hit lands when it would arrive.
+func _cast_missiles(rec: PlayerRecord, caster: Player, def: Dictionary, aim_dir: Vector3) -> void:
+	var flat := Vector3(aim_dir.x, 0, aim_dir.z).normalized()
+	if flat == Vector3.ZERO:
+		flat = -caster.global_basis.z
+	var start := caster.sync_pos + Vector3(0, 1.5, 0) + flat * 0.6
+	var count := int(def["missiles"])
+	var speed: float = def["speed"]
+	var paths := []
+	var delays := []
+	var gen := _generation
+	for k in count:
+		var spread := (k - (count - 1) * 0.5) * 0.14
+		var dir := aim_dir.rotated(Vector3.UP, spread).normalized()
+		var flight := _fly_missile(start, dir, def, rec.team)
+		var delay := k * 0.12
+		paths.append(flight["points"])
+		delays.append(delay)
+		var hit: Node3D = flight["hit"]
+		if hit == null:
+			continue
+		var land: float = delay + float(flight["time"])
+		get_tree().create_timer(land, false, true).timeout.connect(func() -> void:
+			if gen != _generation or match_over or not is_instance_valid(hit) or hit.is_queued_for_deletion():
+				return
+			if hit is Player:
+				damage_player((hit as Player).peer_id, def["damage"], rec.peer_id, "magic missile", start)
+			elif hit is Summon:
+				damage_summon(hit as Summon, def["damage"])
+			elif hit is Structure and (hit as Structure).team != rec.team:
+				damage_structure(hit as Structure, def["structure_damage"]))
+	world.fx_missiles.rpc(paths, delays, speed, def["color"])
+
+
+## One missile's flight: {points (for the visual), time, hit (Player, Summon, Structure or null)}.
+func _fly_missile(start: Vector3, dir: Vector3, def: Dictionary, team: int) -> Dictionary:
+	var speed: float = def["speed"]
+	var seek: float = def["seek_radius"]
+	var turn: float = def["turn_rate"]
+	var max_time := float(def["range"]) / speed
+	var dt := 1.0 / 30.0
+	var pos := start
+	var t := 0.0
+	var points := PackedVector3Array([start])
+	var foes: Array[Node3D] = []
+	for p in world.get_players():
+		if p.team != team and p.alive and not p.cloaked:
+			foes.append(p)
+	for w in world.get_summons():
+		if w.team != team:
+			foes.append(w)
+	var walls: Array[Structure] = []
+	for s in world.get_structures():
+		if not s.is_trap() and not s.is_ladder() and _near_segment(s.global_position, start, start + dir * float(def["range"]), 8.0):
+			walls.append(s)
+	var step := 0
+	while t < max_time:
+		t += dt
+		step += 1
+		# Curve toward the closest enemy ahead and near the path.
+		var best: Node3D = null
+		var best_d := seek
+		for f in foes:
+			var c := _chest_of(f)
+			var to := c - pos
+			var d := to.length()
+			if d < best_d and dir.dot(to.normalized()) > 0.3:
+				best = f
+				best_d = d
+		if best:
+			var want := (_chest_of(best) - pos).normalized()
+			var angle := dir.angle_to(want)
+			if angle > 0.001:
+				dir = dir.slerp(want, minf(1.0, turn * dt / angle)).normalized()
+		pos += dir * speed * dt
+		# Skim over rising ground instead of crashing into it (unless aimed at the ground).
+		var ground := Terrain.height(pos.x, pos.z)
+		if pos.y < ground + 0.4:
+			if dir.y < -0.35:
+				points.append(Vector3(pos.x, ground, pos.z))
+				break
+			pos.y = ground + 0.4
+			dir.y = maxf(dir.y, 0.0)
+			dir = dir.normalized()
+		if step % 3 == 0:
+			points.append(pos)
+		for f in foes:
+			if _chest_of(f).distance_to(pos) < 0.8:
+				points.append(pos)
+				return {"points": points, "time": t, "hit": f}
+		for s in walls:
+			if s.blocks_point(pos):
+				points.append(pos)
+				return {"points": points, "time": t, "hit": s}
+	points.append(pos)
+	return {"points": points, "time": t, "hit": null}
+
+
+func _chest_of(n: Node3D) -> Vector3:
+	return (n as Player).chest() if n is Player else (n as Summon).chest()
+
+
+## Chain Hook: hook the enemy in your sights and drag them toward you.
+func _cast_hook(rec: PlayerRecord, caster: Player, def: Dictionary, aim_dir: Vector3) -> void:
+	var start := caster.sync_pos + Vector3(0, 1.5, 0)
+	var hit := _trace(start, aim_dir, def["range"], 1 - rec.team)
+	var end: Vector3 = hit[0]
+	var victim: Node3D = hit[1]
+	# Spectral warriors can be hooked too: take one that's on the line before the hit.
+	for w in world.get_summons():
+		if w.team == rec.team:
+			continue
+		var c := w.chest()
+		var along := (c - start).dot(aim_dir)
+		if along > 0.0 and along < start.distance_to(end) and (start + aim_dir * along).distance_to(c) < 0.9:
+			victim = w
+			end = c
+	world.fx_spell.rpc("hook", start, end)
+	if victim == null:
+		return
+	var pos := (victim as Player).sync_pos if victim is Player else victim.global_position
+	var toward := Vector3(caster.sync_pos.x - pos.x, 0, caster.sync_pos.z - pos.z)
+	var room := toward.length() - 1.5  # stop at arm's length, never behind the caster
+	var dest := _slide_point(pos, toward.normalized(), minf(float(def["pull"]), room)) if room > 0.3 else pos
+	if victim is Player:
+		var vp := victim as Player
+		damage_player(vp.peer_id, def["damage"], rec.peer_id, "chain hook", start)
+		if vp.alive and dest.distance_to(pos) > 0.2:
+			_teleport_player(vp.peer_id, dest + Vector3(0, 0.1, 0))
+	else:
+		var w := victim as Summon
+		damage_summon(w, def["damage"])
+		if not w.is_queued_for_deletion():
+			w.global_position = dest + Vector3(0, 0.1, 0)
+			w.sync_pos = w.position
 
 
 ## Enemies around the caster are knocked senseless.

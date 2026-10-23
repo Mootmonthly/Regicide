@@ -82,7 +82,8 @@ The default port is **24565** (UDP). Open it on the host's router to play over t
 - **Magic.** Learn spells with gold and magic ore — fireball, frost bolt (slows), chain
   lightning, heal aura, blink, earth wall, gust (knocks crowns loose), meteor, spectral
   warriors (summons 5 ghost knights), thunderclap (stun), siphon life, battle cry,
-  shadow cloak (invisibility) and arcane ward — and cast them with mana. Mana regenerates;
+  shadow cloak (invisibility), arcane ward, magic missiles (homing) and chain hook (pulls
+  enemies to you) — and cast them with mana. Mana regenerates;
   mana potions (brewed from magic ore) top it up.
 - **Shields.** Craft a wooden or iron shield and hold right click to block hits from the
   front. Time it right as a sword lands to parry: no damage, and the attacker is stunned.

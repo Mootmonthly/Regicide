@@ -430,6 +430,22 @@ const ITEMS := {
 		"color": Color(0.5, 0.7, 1.0),
 		"desc": "A shimmering bubble soaks up the next 40 damage you take (lasts 12 s).",
 	},
+	# From the Spell Forge.
+	"magic_missiles": {
+		"name": "Magic Missiles", "kind": "spell", "unlock_cost": 100, "learn": {"magic_ore": 1}, "recipe": {},
+		"mana": 35.0, "cooldown": 10.0,
+		"range": 22.0, "missiles": 3, "damage": 12.0, "structure_damage": 33.0, "speed": 30.0,
+		"seek_radius": 4.0, "turn_rate": 4.0,
+		"color": Color(0.38, 0.09, 0.49),
+		"desc": "Fires 3 magic missiles the way you aim, 12 damage each. They curve a little toward enemies near their path.",
+	},
+	"chain_hook": {
+		"name": "Chain Hook", "kind": "spell", "unlock_cost": 170, "learn": {"magic_ore": 3}, "recipe": {},
+		"mana": 35.0, "cooldown": 10.0,
+		"range": 22.0, "damage": 12.0, "pull": 6.0,
+		"color": Color(0.48, 0.6, 0.23),
+		"desc": "Hook the enemy you aim at and yank them 6 m toward you. Pulls a crown carrier right off their route.",
+	},
 	# What Earth Wall summons (not buildable directly).
 	"earth_wall_piece": {
 		"name": "Earth Wall", "kind": "structure", "piece": "wall", "category": "", "unlock_cost": 0,

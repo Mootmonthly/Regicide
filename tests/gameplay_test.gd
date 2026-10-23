@@ -694,6 +694,49 @@ func _run() -> void:
 	gm.crowns[1].send_home()
 	me.carrying_crown = -1
 	gm._sync_crowns()
+	# --- Spell Forge spells ---
+	for sp in ["magic_missiles", "chain_hook"]:
+		rec.gold += 300
+		rec.inventory.add("magic_ore", 6)
+		gm.request_unlock(sp)
+		check(rec.unlocks.has(sp), "learn %s" % sp)
+	# Magic Missiles curve onto an enemy even when the aim is a little off.
+	enemy.health = enemy.max_health
+	_place(me, Vector3(-120, 0, 60), Vector3(-120, 0, 40))
+	enemy.teleport(Vector3(-120, 0, 45))
+	await _frames(3)
+	me.mana = me.max_mana
+	rec.spell_ready.clear()
+	_ready_to_act(1)
+	var off_aim := (enemy.chest() - (me.sync_pos + Vector3(0, 1.5, 0))).normalized().rotated(Vector3.UP, 0.1)
+	check(gm.perform_primary(1, "magic_missiles", off_aim, Vector3.ZERO), "cast magic missiles")
+	check(enemy.health == enemy.max_health, "missiles take time to fly")
+	await _frames(75)
+	var mm_damage := enemy.max_health - enemy.health
+	check(mm_damage >= 24.0 and mm_damage <= 36.0, "at least two of the three missiles home in (took %.0f)" % mm_damage)
+	# Chain Hook damages and drags the enemy toward you.
+	enemy.health = enemy.max_health
+	enemy.teleport(Vector3(-120, 0, 42))
+	erec.last_valid_pos = Vector3(-120, 0, 42)
+	await _frames(3)
+	me.mana = me.max_mana
+	_ready_to_act(1)
+	check(gm.perform_primary(1, "chain_hook", (enemy.chest() - (me.sync_pos + Vector3(0, 1.5, 0))).normalized(), Vector3.ZERO), "cast chain hook")
+	check(is_equal_approx(enemy.max_health - enemy.health, 12.0), "chain hook does 12 damage")
+	# (The enemy stands in for a remote player, so check where the server sent them.)
+	check(absf(erec.last_valid_pos.z - 48.0) < 0.6, "and pulls them 6 m toward you (now at z %.1f)" % erec.last_valid_pos.z)
+	enemy.teleport(erec.last_valid_pos)
+	# A hook at arm's length doesn't pull them past you.
+	enemy.teleport(Vector3(-120, 0, 58))
+	erec.last_valid_pos = Vector3(-120, 0, 58)
+	await _frames(3)
+	rec.spell_ready.clear()
+	me.mana = me.max_mana
+	_ready_to_act(1)
+	gm.perform_primary(1, "chain_hook", (enemy.chest() - (me.sync_pos + Vector3(0, 1.5, 0))).normalized(), Vector3.ZERO)
+	check(erec.last_valid_pos.z < 60.0, "the hook never drags anyone behind you")
+	enemy.health = enemy.max_health
+
 	# --- More skills ---
 	rec.skill_points = 10
 	check(gm.perform_skill(1, "bounty_hunter"), "learn Bounty Hunter")
