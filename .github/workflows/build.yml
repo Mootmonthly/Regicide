@@ -1,6 +1,6 @@
 name: build
 
-# Windows and Linux builds of the game.
+# Windows and Linux builds of the game, plus a Linux dedicated-server package.
 # - Every push to main: builds attached to the workflow run (Actions tab → run → Artifacts).
 # - Publishing a release: Actions tab → "build" → "Run workflow", enter a version like
 #   v0.2.0. The builds are published as a GitHub Release with that tag.
@@ -27,6 +27,15 @@ jobs:
       GODOT_VERSION: 4.4.1
     steps:
       - uses: actions/checkout@v4
+
+      - name: Stamp the version
+        # Clients and servers must run the same version to play together.
+        run: |
+          if [ -n "${{ inputs.version }}" ]; then V="${{ inputs.version }}"
+          elif [[ "$GITHUB_REF" == refs/tags/v* ]]; then V="$GITHUB_REF_NAME"
+          else V="dev-${GITHUB_SHA::7}"; fi
+          sed -i "s|^config/version=.*|config/version=\"$V\"|" project.godot
+          grep config/version project.godot
 
       - name: Download Godot and export templates
         run: |
@@ -55,6 +64,14 @@ jobs:
           (cd builds/windows && zip -q -r ../Regicide-windows.zip .)
           (cd builds/linux && tar -czf ../Regicide-linux.tar.gz .)
 
+      - name: Package the dedicated server
+        run: |
+          mkdir -p builds/server/regicide-server
+          cp builds/linux/Regicide.x86_64 server/* builds/server/regicide-server/
+          cp docs/SERVER.md builds/server/regicide-server/README.md
+          chmod +x builds/server/regicide-server/*.sh builds/server/regicide-server/Regicide.x86_64
+          tar -czf builds/Regicide-server-linux.tar.gz -C builds/server regicide-server
+
       - name: Smoke test the Linux build
         run: |
           timeout 60 builds/linux/Regicide.x86_64 --headless --quit-after 600 -- --server --port 27900 --bots 4 > server.log 2>&1 || true
@@ -72,6 +89,11 @@ jobs:
           name: Regicide-linux
           path: builds/Regicide-linux.tar.gz
 
+      - uses: actions/upload-artifact@v4
+        with:
+          name: Regicide-server-linux
+          path: builds/Regicide-server-linux.tar.gz
+
       - name: Publish release
         if: startsWith(github.ref, 'refs/tags/v') || inputs.version != ''
         uses: softprops/action-gh-release@v2
@@ -82,4 +104,5 @@ jobs:
           files: |
             builds/Regicide-windows.zip
             builds/Regicide-linux.tar.gz
+            builds/Regicide-server-linux.tar.gz
           generate_release_notes: true

@@ -1,0 +1,11 @@
+# docker compose up -d   → builds and starts the server in the background
+# docker compose logs -f → watch the log
+# Settings: ./config/server.cfg (created on first start), then: docker compose restart
+services:
+  regicide:
+    build: .
+    restart: unless-stopped
+    ports:
+      - "24565:24565/udp"
+    volumes:
+      - ./config:/config

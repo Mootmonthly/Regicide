@@ -124,7 +124,7 @@ func server_start() -> void:
 
 
 func _on_connected_to_server() -> void:
-	request(&"register_player", [Net.player_name])
+	request(&"register_player", [Net.player_name, {"version": Net.game_version(), "password": Net.password}])
 
 
 func _on_connection_failed() -> void:
@@ -136,12 +136,45 @@ func _on_server_disconnected() -> void:
 
 
 @rpc("any_peer", "call_local", "reliable")
-func register_player(player_name: String) -> void:
+func register_player(player_name: String, info: Dictionary = {}) -> void:
 	if not server_running:
 		return
 	var peer := _sender()
-	if not records.has(peer):
-		_register(peer, player_name)
+	if records.has(peer):
+		return
+	var theirs := str(info.get("version", "unknown"))
+	if theirs != Net.game_version():
+		_send_to(peer, &"_rejected", ["This server runs Regicide %s and you have %s. Download the matching version from github.com/Mootmonthly/Regicide/releases." % [Net.game_version(), theirs]])
+		_kick_later(peer)
+		return
+	if Net.password != "" and str(info.get("password", "")) != Net.password:
+		_send_to(peer, &"_rejected", ["Wrong server password." if str(info.get("password", "")) != "" else "This server needs a password. Enter it on the main menu and join again."])
+		_kick_later(peer)
+		return
+	if _human_count() >= Net.max_players:
+		_send_to(peer, &"_rejected", ["The server is full (%d players)." % Net.max_players])
+		_kick_later(peer)
+		return
+	_register(peer, player_name)
+	if Net.is_dedicated():
+		_tell(peer, "Welcome to %s." % Net.server_name)
+		if Net.motd != "":
+			_tell(peer, Net.motd)
+
+
+func _human_count() -> int:
+	var n := 0
+	for r: PlayerRecord in records.values():
+		if not r.is_bot:
+			n += 1
+	return n
+
+
+## Drop a refused peer after its rejection message has had time to arrive.
+func _kick_later(peer: int) -> void:
+	get_tree().create_timer(1.0, true, false, true).timeout.connect(func() -> void:
+		if multiplayer.multiplayer_peer and peer in multiplayer.get_peers():
+			multiplayer.multiplayer_peer.disconnect_peer(peer))
 
 
 func _register(peer: int, player_name: String) -> void:
@@ -245,6 +278,10 @@ func _remove_player(peer: int) -> void:
 			remove_summon(w)
 	records.erase(peer)
 	_scoreboard_dirty = true
+	# A dedicated server that empties out starts over, so the next group gets a fresh match.
+	if Net.is_dedicated() and peer > 0 and _human_count() == 0 and server_running:
+		print("[server] Everyone left; resetting the match.")
+		_reset_match.call_deferred()
 
 
 func _on_peer_disconnected(peer: int) -> void:
@@ -1687,8 +1724,18 @@ func _fireball_blocked(point: Vector3, team: int) -> bool:
 # Per-tick server work: crowns, speed checks, scoreboard
 # =============================================================================
 
+var _status_log_timer := 60.0
+
+
 func _physics_process(delta: float) -> void:
 	clock += delta
+	if server_running and Net.is_dedicated():
+		_status_log_timer -= delta
+		if _status_log_timer <= 0.0:
+			_status_log_timer = 300.0
+			var t := ceili(time_left)
+			print("[status] %d players + %d bots · score %d–%d · %s" % [_human_count(), records.size() - _human_count(),
+				scores[0], scores[1], "overtime" if overtime else "%d:%02d left" % [t / 60, t % 60]])
 	if not server_running:
 		if not match_over and not overtime:
 			time_left = maxf(0.0, time_left - delta)  # count down between server updates

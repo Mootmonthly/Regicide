@@ -22,7 +22,7 @@ const DEFAULTS := {
 	"controls": {"sensitivity": 1.0, "invert_y": false, "fov": 80.0},
 	"audio": {"master": 0.8, "effects": 1.0, "voice": 1.0},
 	"graphics": {"quality": 2, "render_scale": 1.0, "fullscreen": false, "vsync": true, "fps_cap": 0},
-	"general": {"seen_help": false},
+	"general": {"seen_help": false, "name": "", "address": "127.0.0.1", "port": 24565},
 }
 
 ## Section -> key -> value, starting from DEFAULTS.

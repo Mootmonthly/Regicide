@@ -11,10 +11,12 @@ config_version=5
 [application]
 
 config/name="Regicide"
+config/version="dev"
 config/description="Medieval 50v50 arena battler: gather, build, craft, and steal the enemy crown."
 run/main_scene="res://scenes/main_menu.tscn"
 config/features=PackedStringArray("4.4", "GL Compatibility")
 config/icon="res://icon.svg"
+run/flush_stdout_on_print=true
 
 [audio]
 

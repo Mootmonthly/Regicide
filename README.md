@@ -27,6 +27,14 @@ Windows may warn that the app is unrecognized (it isn't code-signed): click
 "More info" → "Run anyway". Every push to `main` also builds both versions; they're
 attached to the run on the Actions tab.
 
+## Hosting a server
+
+Run an always-on dedicated server on any Linux machine or VPS: download
+`Regicide-server-linux.tar.gz` from the Releases page, unpack it, and run
+`sudo ./install.sh` (systemd service) or `docker compose up -d`. Open UDP port 24565.
+Settings (name, password, max players, welcome message) are in `server.cfg`.
+Full guide: [docs/SERVER.md](docs/SERVER.md).
+
 ## Spells and skills
 
 ![The spellbook](docs/regicide-spells.png)

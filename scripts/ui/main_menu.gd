@@ -5,6 +5,7 @@ var _name: LineEdit
 var _address: LineEdit
 var _port: SpinBox
 var _team_fill: SpinBox
+var _password: LineEdit
 var _practice_bots: SpinBox
 var _overlay: Control
 
@@ -35,8 +36,12 @@ func _ready() -> void:
 	sub.horizontal_alignment = HORIZONTAL_ALIGNMENT_CENTER
 	col.add_child(sub)
 
-	_name = _field(col, "Name", Net.player_name)
-	_address = _field(col, "Server address", Net.address)
+	var saved_name := str(Settings.get_value("general", "name"))
+	_name = _field(col, "Name", saved_name if saved_name != "" else Net.player_name)
+	_address = _field(col, "Server address", str(Settings.get_value("general", "address")))
+	_password = _field(col, "Password", "")
+	_password.secret = true
+	_password.placeholder_text = "only if the server has one"
 	var port_row := HBoxContainer.new()
 	col.add_child(port_row)
 	var port_label := Label.new()
@@ -46,7 +51,7 @@ func _ready() -> void:
 	_port = SpinBox.new()
 	_port.min_value = 1024
 	_port.max_value = 65535
-	_port.value = Net.port
+	_port.value = int(Settings.get_value("general", "port"))
 	_port.size_flags_horizontal = Control.SIZE_EXPAND_FILL
 	port_row.add_child(_port)
 
@@ -75,6 +80,8 @@ func _ready() -> void:
 	play_bots.size_flags_horizontal = Control.SIZE_EXPAND_FILL
 	play_bots.custom_minimum_size.y = 40
 	play_bots.pressed.connect(func() -> void:
+		_remember()
+		Net.password = ""
 		Net.player_name = _name.text.strip_edges()
 		Net.port = int(_port.value)
 		Net.team_fill = int(_practice_bots.value)
@@ -116,6 +123,14 @@ func _ready() -> void:
 		col.add_child(err)
 
 
+## Keep the name, address and port for next time (not the password).
+func _remember() -> void:
+	Settings.values["general"]["name"] = _name.text.strip_edges()
+	Settings.values["general"]["address"] = _address.text.strip_edges()
+	Settings.values["general"]["port"] = int(_port.value)
+	Settings.save_settings()
+
+
 func _open(panel: Control) -> void:
 	if is_instance_valid(_overlay):
 		_overlay.queue_free()
@@ -148,6 +163,8 @@ func _button(parent: Control, text: String, mode: Net.Mode) -> void:
 	var b := Button.new()
 	b.text = text
 	b.pressed.connect(func() -> void:
+		_remember()
+		Net.password = _password.text
 		Net.player_name = _name.text.strip_edges()
 		Net.address = _address.text.strip_edges()
 		Net.port = int(_port.value)

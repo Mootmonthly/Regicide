@@ -99,6 +99,16 @@ func _run() -> void:
 		if r.res_type == "wood":
 			r.set_amount(0)
 
+	# The map is random, so a tree or rock can stand where a test fights, dashes or
+	# builds; melee would hit it instead of the enemy. Clear those areas (gathering
+	# tests are done with resources by now).
+	for r in world.resource_nodes:
+		var p := r.position
+		var arena := p.x > -165.0 and p.x < -45.0 and p.z > -15.0 and p.z < 80.0
+		var build_site := p.x > 25.0 and p.x < 65.0 and p.z > -15.0 and p.z < 20.0
+		if arena or build_site:
+			r.set_amount(0)
+
 	# --- Crafting ---
 	gm.request_craft("iron_sword")
 	check(rec.inventory.count("iron_sword") == 0, "can't craft without resources")

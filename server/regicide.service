@@ -1,0 +1,21 @@
+# systemd service: starts the server on boot and restarts it if it stops.
+# install.sh sets this up; to do it by hand:
+#   sudo cp regicide.service /etc/systemd/system/ && sudo systemctl enable --now regicide
+[Unit]
+Description=Regicide dedicated game server
+After=network-online.target
+Wants=network-online.target
+
+[Service]
+User=regicide
+WorkingDirectory=/opt/regicide
+ExecStart=/opt/regicide/run-server.sh
+Restart=always
+RestartSec=5
+# The server only needs its own folder.
+NoNewPrivileges=true
+ProtectSystem=strict
+ReadWritePaths=/opt/regicide /home/regicide
+
+[Install]
+WantedBy=multi-user.target
