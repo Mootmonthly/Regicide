@@ -1,0 +1,75 @@
+name: build
+
+# Windows and Linux builds of the game.
+# - Every push to main: builds attached to the workflow run (Actions tab → run → Artifacts).
+# - Pushing a tag like v0.1.0: the builds are also published as a GitHub Release.
+
+on:
+  push:
+    branches: [main]
+    tags: ["v*"]
+  workflow_dispatch:
+
+permissions:
+  contents: write
+
+jobs:
+  export:
+    runs-on: ubuntu-latest
+    env:
+      GODOT_VERSION: 4.4.1
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Download Godot and export templates
+        run: |
+          curl -sSL -o godot.zip "https://github.com/godotengine/godot/releases/download/${GODOT_VERSION}-stable/Godot_v${GODOT_VERSION}-stable_linux.x86_64.zip"
+          unzip -q godot.zip
+          mv "Godot_v${GODOT_VERSION}-stable_linux.x86_64" /usr/local/bin/godot
+          curl -sSL -o templates.tpz "https://github.com/godotengine/godot/releases/download/${GODOT_VERSION}-stable/Godot_v${GODOT_VERSION}-stable_export_templates.tpz"
+          unzip -q templates.tpz 'templates/linux_release.x86_64' 'templates/windows_release_x86_64.exe' 'templates/version.txt'
+          mkdir -p "$HOME/.local/share/godot/export_templates/${GODOT_VERSION}.stable"
+          mv templates/* "$HOME/.local/share/godot/export_templates/${GODOT_VERSION}.stable/"
+          rm -rf templates templates.tpz godot.zip
+
+      - name: Import project
+        run: godot --headless --path . --import
+
+      - name: Export Windows and Linux
+        run: |
+          mkdir -p builds/windows builds/linux
+          godot --headless --path . --export-release "Windows" builds/windows/Regicide.exe
+          godot --headless --path . --export-release "Linux" builds/linux/Regicide.x86_64
+          test -s builds/windows/Regicide.exe
+          test -s builds/linux/Regicide.x86_64
+          chmod +x builds/linux/Regicide.x86_64
+          cp docs/PLAYING.txt builds/windows/README.txt
+          cp docs/PLAYING.txt builds/linux/README.txt
+          (cd builds/windows && zip -q -r ../Regicide-windows.zip .)
+          (cd builds/linux && tar -czf ../Regicide-linux.tar.gz .)
+
+      - name: Smoke test the Linux build
+        run: |
+          timeout 60 builds/linux/Regicide.x86_64 --headless --quit-after 600 -- --server --port 27900 --bots 4 > server.log 2>&1 || true
+          cat server.log
+          grep -q "Match started" server.log
+          ! grep -E "SCRIPT ERROR|Failed loading resource" server.log
+
+      - uses: actions/upload-artifact@v4
+        with:
+          name: Regicide-windows
+          path: builds/Regicide-windows.zip
+
+      - uses: actions/upload-artifact@v4
+        with:
+          name: Regicide-linux
+          path: builds/Regicide-linux.tar.gz
+
+      - name: Publish release (tags only)
+        if: startsWith(github.ref, 'refs/tags/v')
+        uses: softprops/action-gh-release@v2
+        with:
+          files: |
+            builds/Regicide-windows.zip
+            builds/Regicide-linux.tar.gz
+          generate_release_notes: true

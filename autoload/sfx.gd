@@ -23,10 +23,12 @@ func _ready() -> void:
 		var p := AudioStreamPlayer3D.new()
 		p.max_distance = HEARING_DISTANCE
 		p.unit_size = 6.0
+		p.bus = "Effects"
 		add_child(p)
 		_voices_3d.append(p)
 	for i in 6:
 		var p := AudioStreamPlayer.new()
+		p.bus = "Effects"
 		add_child(p)
 		_voices_2d.append(p)
 

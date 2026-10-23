@@ -64,7 +64,7 @@ func _process(_delta: float) -> void:
 		return
 	var channel := -1
 	var me := world.local_player()
-	if me and (world.hud == null or not world.hud.menu_open):
+	if me and (world.hud == null or not world.hud.ui_open()):
 		if Input.is_action_pressed("voice_proximity"):
 			channel = Channel.PROXIMITY
 		elif Input.is_action_pressed("voice_team"):
@@ -172,6 +172,7 @@ func _voice_for(speaker: int, channel: int) -> AudioStreamGeneratorPlayback:
 		p3.unit_size = 10.0
 		p3.max_distance = PROXIMITY_RANGE
 		p3.position = Vector3(0, 1.6, 0)
+		p3.bus = "Voice"
 		p.add_child(p3)
 		p3.play()
 		node = p3
@@ -179,6 +180,7 @@ func _voice_for(speaker: int, channel: int) -> AudioStreamGeneratorPlayback:
 		var p2 := AudioStreamPlayer.new()
 		p2.stream = generator
 		p2.volume_db = -3.0
+		p2.bus = "Voice"
 		add_child(p2)
 		p2.play()
 		node = p2

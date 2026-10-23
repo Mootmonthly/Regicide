@@ -12,6 +12,21 @@ drawbridges and battlements make attacking and defending a base a real fight.
 
 ![The forest by the river](docs/screenshots/forest_middle.png)
 
+## Download and play
+
+Grab the latest build from the [Releases page](https://github.com/Mootmonthly/Regicide/releases):
+`Regicide-windows.zip` (Windows) or `Regicide-linux.tar.gz` (Linux). Unzip and run
+`Regicide.exe` / `Regicide.x86_64`. No install needed.
+
+- **Practice alone:** main menu → choose players per team → **Play vs Bots**.
+- **With friends:** one person presses **Host & Play**; everyone else enters the host's IP
+  and presses **Join** (UDP port 24565; over the internet the host forwards that port).
+- **Esc** opens the pause menu: How to play, Settings (mouse, keys, audio, graphics), Leave.
+
+Windows may warn that the app is unrecognized (it isn't code-signed): click
+"More info" → "Run anyway". Every push to `main` also builds both versions; they're
+attached to the run on the Actions tab.
+
 ## Spells and skills
 
 ![The spellbook](docs/regicide-spells.png)
@@ -129,7 +144,7 @@ godot --headless --path . --fixed-fps 60 res://tests/bot_soak.tscn -- --minutes 
                                                            # full bot match, fast-forwarded
 ```
 
-CI runs all four on every push (`.github/workflows/tests.yml`). The soak prints a
+CI runs all four on every push (`.github/workflows/tests.yml`); the soak runs 10 game-minutes there. The soak prints a
 per-minute report (kills, steals, captures, structures, items, server frame time).
 
 See [docs/DESIGN.md](docs/DESIGN.md) for the game design and roadmap, and

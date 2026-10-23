@@ -1,0 +1,22 @@
+REGICIDE
+Steal their crown. Defend your own.
+
+STARTING THE GAME
+  Windows: double-click Regicide.exe. If Windows SmartScreen says "Windows protected
+  your PC", click "More info", then "Run anyway" (the game isn't code-signed).
+  Linux: run ./Regicide.x86_64 (make it executable first if needed: chmod +x).
+
+PLAY ALONE AGAINST BOTS
+  Main menu -> pick how many players per team -> "Play vs Bots".
+
+PLAY WITH FRIENDS
+  One person hosts: "Host & Play". Everyone else types the host's IP address into
+  "Server address" and presses "Join". The default port is 24565.
+  - On the same Wi-Fi / LAN: use the host's local IP (for example 192.168.1.20).
+  - Over the internet: the host must forward UDP port 24565 on their router to their
+    computer, and friends use the host's public IP. If Windows asks whether to allow
+    Regicide through the firewall, allow it.
+
+IN THE GAME
+  Esc opens the pause menu: How to play, Settings (mouse, keys, audio, graphics),
+  and Leave match. The How to play card also appears the first time you play.

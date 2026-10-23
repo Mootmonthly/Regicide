@@ -11,7 +11,6 @@ const MOUNT_MULT := 1.7
 const CROWN_CARRY_MULT := 0.8
 const JUMP_VELOCITY := 6.0
 const GRAVITY := 18.0
-const MOUSE_SENSITIVITY := 0.0025
 const REMOTE_SMOOTHING := 15.0
 const CLIMB_SPEED := 4.0
 const WADE_MULT := 0.45
@@ -485,18 +484,17 @@ func _unhandled_input(event: InputEvent) -> void:
 		return
 	var captured := Input.mouse_mode == Input.MOUSE_MODE_CAPTURED
 	if event is InputEventMouseMotion and captured:
-		rotation.y -= event.relative.x * MOUSE_SENSITIVITY
-		_pivot.rotation.x = clampf(_pivot.rotation.x - event.relative.y * MOUSE_SENSITIVITY, -1.45, 1.4)
+		var sens := Settings.mouse_sensitivity()
+		var dy: float = -event.relative.y if Settings.get_value("controls", "invert_y") else event.relative.y
+		rotation.y -= event.relative.x * sens
+		_pivot.rotation.x = clampf(_pivot.rotation.x - dy * sens, -1.45, 1.4)
 		return
 	if event.is_action_pressed("camera_toggle"):
 		set_third_person(not third_person)
 		return
-	if event.is_action_pressed("release_mouse"):
-		Input.mouse_mode = Input.MOUSE_MODE_VISIBLE
-		return
 	if event is InputEventMouseButton and event.pressed and not captured:
 		var hud := (get_parent().get_parent() as World).hud
-		if hud == null or not hud.menu_open:
+		if hud == null or not hud.ui_open():
 			Input.mouse_mode = Input.MOUSE_MODE_CAPTURED
 			get_viewport().set_input_as_handled()
 		return
@@ -802,7 +800,10 @@ func _build_camera() -> void:
 	_arm.add_excluded_object(get_rid())
 	_pivot.add_child(_arm)
 	_camera = Camera3D.new()
-	_camera.fov = 80.0
+	_camera.fov = float(Settings.get_value("controls", "fov"))
+	Settings.changed.connect(func() -> void:
+		if _camera:
+			_camera.fov = float(Settings.get_value("controls", "fov")))
 	_camera.near = 0.05
 	_camera.far = 700.0
 	_arm.add_child(_camera)

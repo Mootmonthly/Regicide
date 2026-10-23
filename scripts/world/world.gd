@@ -22,6 +22,8 @@ var terrain_ready := false
 ## Piece states from the welcome snapshot whose pieces haven't spawned here yet.
 var pending_piece_states: Dictionary = {}
 var _player_scene: PackedScene
+var _sun: DirectionalLight3D
+var _ground_cover: Array[MultiMeshInstance3D] = []
 
 @onready var game_mode: GameMode = $GameMode
 @onready var player_spawner: MultiplayerSpawner = $PlayerSpawner
@@ -49,6 +51,8 @@ func _ready() -> void:
 		$Crowns.add_child(crown)
 		crown_nodes.append(crown)
 
+	Settings.changed.connect(_apply_quality)
+	_apply_quality()
 	player_spawner.spawn_function = _spawn_player
 	structure_spawner.spawn_function = _spawn_structure
 	# Spectral warriors (and any future summons).
@@ -76,6 +80,17 @@ func _ready() -> void:
 		map_seed = randi_range(1, 999_999)
 		generate(map_seed)
 		game_mode.server_start()
+
+
+## Graphics quality (Settings): Low drops shadows and grass, Medium keeps grass close by.
+func _apply_quality() -> void:
+	var q := Settings.quality()
+	if _sun:
+		_sun.shadow_enabled = q >= 1
+		_sun.directional_shadow_max_distance = 50.0 if q == 1 else 80.0
+	for mmi in _ground_cover:
+		mmi.visible = q >= 1
+		mmi.visibility_range_end = 90.0 if q == 1 else 160.0
 
 
 # --- Lookups ---------------------------------------------------------------
@@ -382,6 +397,8 @@ func _build_ground_cover() -> void:
 		mmi.cast_shadow = GeometryInstance3D.SHADOW_CASTING_SETTING_OFF
 		mmi.visibility_range_end = 160.0
 		resources_root.add_child(mmi)
+		_ground_cover.append(mmi)
+	_apply_quality()
 
 
 static func _hidden(xf: Transform3D) -> Transform3D:
@@ -933,6 +950,7 @@ func _build_arena() -> void:
 	add_child(env)
 
 	var sun := DirectionalLight3D.new()
+	_sun = sun
 	sun.rotation_degrees = Vector3(-55, 30, 0)
 	sun.light_energy = 1.1
 	sun.shadow_enabled = true

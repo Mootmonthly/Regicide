@@ -24,6 +24,7 @@ driver/enable_input=true
 
 Net="*res://autoload/net.gd"
 Controls="*res://autoload/controls.gd"
+Settings="*res://autoload/settings.gd"
 Sfx="*res://autoload/sfx.gd"
 
 [display]

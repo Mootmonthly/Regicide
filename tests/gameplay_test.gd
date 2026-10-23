@@ -925,6 +925,22 @@ func _run() -> void:
 	check(rec.inventory.to_dict().is_empty() and rec.gold == 0, "reset clears progress")
 	check(tree.amount == tree.max_amount, "reset restores resources")
 
+	# --- Settings: key rebinding ---
+	var jump_default := Settings.binding_text("jump")
+	var ev := InputEventKey.new()
+	ev.physical_keycode = KEY_J
+	Settings.bind("jump", ev)
+	check(Settings.binding_text("jump") == "J" and InputMap.action_has_event("jump", ev), "rebinding a key changes the input map (%s)" % Settings.binding_text("jump"))
+	Settings.bind("sprint", ev)
+	check(Settings.conflicts("jump").size() == 1, "binding two actions to one key is flagged")
+	Settings.reset_bindings()
+	check(Settings.binding_text("jump") == jump_default, "reset puts the default keys back")
+	var mb := InputEventMouseButton.new()
+	mb.button_index = MOUSE_BUTTON_XBUTTON1
+	Settings.bind("dash", mb)
+	check(Settings.binding_text("dash") == "Mouse 4", "actions can be bound to mouse buttons")
+	Settings.reset_bindings()
+
 	# --- Time limit ---
 	gm.match_started_at = gm.clock - (GameData.MATCH_TIME_LIMIT - 120.0)
 	await _frames(2)

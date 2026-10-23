@@ -5,6 +5,8 @@ var _name: LineEdit
 var _address: LineEdit
 var _port: SpinBox
 var _team_fill: SpinBox
+var _practice_bots: SpinBox
+var _overlay: Control
 
 
 func _ready() -> void:
@@ -63,9 +65,44 @@ func _ready() -> void:
 	_team_fill.size_flags_horizontal = Control.SIZE_EXPAND_FILL
 	fill_row.add_child(_team_fill)
 
+	# Single-player practice: host a match against bots.
+	var practice := HBoxContainer.new()
+	practice.add_theme_constant_override("separation", 8)
+	col.add_child(practice)
+	var play_bots := Button.new()
+	play_bots.text = "Play vs Bots"
+	play_bots.tooltip_text = "A practice match on your own computer, with bots on both teams."
+	play_bots.size_flags_horizontal = Control.SIZE_EXPAND_FILL
+	play_bots.custom_minimum_size.y = 40
+	play_bots.pressed.connect(func() -> void:
+		Net.player_name = _name.text.strip_edges()
+		Net.port = int(_port.value)
+		Net.team_fill = int(_practice_bots.value)
+		Net.play(Net.Mode.HOST))
+	practice.add_child(play_bots)
+	_practice_bots = SpinBox.new()
+	_practice_bots.min_value = 1
+	_practice_bots.max_value = GameData.TEAM_SIZE
+	_practice_bots.value = 10
+	_practice_bots.suffix = "per team"
+	_practice_bots.custom_minimum_size.x = 150
+	_practice_bots.tooltip_text = "How many players each team has, counting you."
+	practice.add_child(_practice_bots)
+	col.add_child(HSeparator.new())
+
 	_button(col, "Host & Play", Net.Mode.HOST)
 	_button(col, "Join", Net.Mode.JOIN)
 	_button(col, "Dedicated Server (no player)", Net.Mode.DEDICATED)
+	col.add_child(HSeparator.new())
+	var extras := HBoxContainer.new()
+	extras.add_theme_constant_override("separation", 8)
+	col.add_child(extras)
+	for entry: Array in [["How to play", func() -> void: _open(HelpPanel.new())], ["Settings", func() -> void: _open(SettingsPanel.new())]]:
+		var b := Button.new()
+		b.text = entry[0]
+		b.size_flags_horizontal = Control.SIZE_EXPAND_FILL
+		b.pressed.connect(entry[1])
+		extras.add_child(b)
 	var quit := Button.new()
 	quit.text = "Quit"
 	quit.pressed.connect(get_tree().quit)
@@ -77,6 +114,20 @@ func _ready() -> void:
 		err.horizontal_alignment = HORIZONTAL_ALIGNMENT_CENTER
 		err.add_theme_color_override("font_color", Color(1, 0.45, 0.4))
 		col.add_child(err)
+
+
+func _open(panel: Control) -> void:
+	if is_instance_valid(_overlay):
+		_overlay.queue_free()
+	_overlay = panel
+	add_child(panel)
+
+
+func _unhandled_input(event: InputEvent) -> void:
+	if event.is_action_pressed("release_mouse") and is_instance_valid(_overlay):
+		_overlay.queue_free()
+		_overlay = null
+		get_viewport().set_input_as_handled()
 
 
 func _field(parent: Control, label_text: String, value: String) -> LineEdit:

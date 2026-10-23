@@ -7,6 +7,8 @@ const FEED_LINES := 7
 const FEED_SECONDS := 8.0
 
 var menu_open := false
+var _pause: PanelContainer  ## Esc menu
+var _overlay: Control  ## settings or help window over the game, if any
 
 var _world: World
 var _game_mode: GameMode
@@ -56,6 +58,8 @@ func _ready() -> void:
 	_game_mode.scoreboard_updated.connect(_rebuild_scoreboard)
 	for c in _game_mode.crowns:
 		_last_crown_states.append(c.state)
+	if not bool(Settings.get_value("general", "seen_help")):
+		show_help.call_deferred()
 
 
 func _label(text := "", size := 18) -> Label:
@@ -194,7 +198,7 @@ func _build() -> void:
 	bottom.add_child(_mode_label)
 	bottom.move_child(_mode_label, 1)
 
-	var help := _label("WASD move · Shift sprint · LMB use · RMB block · 1-0 select · Q build · E use · X dash (skill) · C craft, spells & skills · T talk nearby · Y talk team · V camera · Tab scores", 13)
+	var help := _label("WASD move · Shift sprint · LMB use · RMB block · 1-0 select · Q build · E use · X dash (skill) · C craft, spells & skills · T talk nearby · Y talk team · V camera · Tab scores · Esc menu", 13)
 	help.horizontal_alignment = HORIZONTAL_ALIGNMENT_CENTER
 	bottom.add_child(help)
 
@@ -226,6 +230,7 @@ func _build_menu(root: Control) -> void:
 	_menu.custom_minimum_size = Vector2(760, 520)
 	_menu.visible = false
 	root.add_child(_menu)
+	_build_pause_menu(root)
 	var margin := MarginContainer.new()
 	for side in ["left", "right", "top", "bottom"]:
 		margin.add_theme_constant_override("margin_" + side, 14)
@@ -317,6 +322,20 @@ func _score_row(nm: String, k: String, d: String, cap: String, color: Color) -> 
 
 
 func _unhandled_input(event: InputEvent) -> void:
+	if event.is_action_pressed("release_mouse"):
+		# Esc closes whatever is open, or opens the pause menu.
+		if is_instance_valid(_overlay):
+			_overlay.queue_free()
+			_overlay = null
+			_pause.visible = true
+		elif menu_open:
+			set_menu_open(false)
+		else:
+			set_paused(not _pause.visible)
+		get_viewport().set_input_as_handled()
+		return
+	if ui_open() and not menu_open:
+		return
 	if event.is_action_pressed("toggle_menu"):
 		set_menu_open(not menu_open)
 		get_viewport().set_input_as_handled()
@@ -327,6 +346,69 @@ func _unhandled_input(event: InputEvent) -> void:
 	elif event.is_action_released("scoreboard"):
 		_scoreboard.visible = false
 		get_viewport().set_input_as_handled()
+
+
+## True while any menu or window is up (the game shouldn't grab the mouse).
+func ui_open() -> bool:
+	return menu_open or _pause.visible or is_instance_valid(_overlay)
+
+
+func set_paused(open: bool) -> void:
+	_pause.visible = open
+	Input.mouse_mode = Input.MOUSE_MODE_VISIBLE if open else Input.MOUSE_MODE_CAPTURED
+
+
+func show_help() -> void:
+	_open_overlay(HelpPanel.new())
+
+
+func _open_overlay(panel: Control) -> void:
+	if is_instance_valid(_overlay):
+		_overlay.queue_free()
+	_pause.visible = false
+	if menu_open:
+		set_menu_open(false)
+	_overlay = panel
+	add_child(panel)
+	Input.mouse_mode = Input.MOUSE_MODE_VISIBLE
+	panel.connect("closed", func() -> void:
+		_overlay = null
+		Input.mouse_mode = Input.MOUSE_MODE_CAPTURED)
+
+
+func _build_pause_menu(root: Control) -> void:
+	_pause = PanelContainer.new()
+	_pause.set_anchors_and_offsets_preset(Control.PRESET_CENTER)
+	_pause.grow_horizontal = Control.GROW_DIRECTION_BOTH
+	_pause.grow_vertical = Control.GROW_DIRECTION_BOTH
+	_pause.custom_minimum_size = Vector2(320, 0)
+	var style := StyleBoxFlat.new()
+	style.bg_color = Color(0.1, 0.08, 0.07, 0.94)
+	style.border_color = Color(0.75, 0.6, 0.3)
+	style.set_border_width_all(2)
+	style.set_corner_radius_all(6)
+	style.set_content_margin_all(18)
+	_pause.add_theme_stylebox_override("panel", style)
+	_pause.visible = false
+	root.add_child(_pause)
+	var col := VBoxContainer.new()
+	col.add_theme_constant_override("separation", 10)
+	_pause.add_child(col)
+	var title := _label("Paused", 26)
+	title.horizontal_alignment = HORIZONTAL_ALIGNMENT_CENTER
+	col.add_child(title)
+	var note := _label("The match keeps going while this is open.", 14)
+	note.horizontal_alignment = HORIZONTAL_ALIGNMENT_CENTER
+	col.add_child(note)
+	for entry: Array in [["Resume", func() -> void: set_paused(false)],
+			["How to play", show_help],
+			["Settings", func() -> void: _open_overlay(SettingsPanel.new())],
+			["Leave match", func() -> void: Net.leave()]]:
+		var b := Button.new()
+		b.text = entry[0]
+		b.custom_minimum_size.y = 40
+		b.pressed.connect(entry[1])
+		col.add_child(b)
 
 
 func set_menu_open(open: bool) -> void:
