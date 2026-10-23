@@ -34,6 +34,7 @@ func _ready() -> void:
 	add_child(_visual)
 	_shape = CollisionShape3D.new()
 	var cyl := CylinderShape3D.new()
+	var box := Vector3.ZERO
 	match res_type:
 		"wood":
 			# Trees are drawn in batches by World (MultiMesh); this node is just the
@@ -42,17 +43,15 @@ func _ready() -> void:
 			radius = 0.45 * tree_height / 16.0
 			cyl.height = tree_height
 		"stone":
-			radius = 1.1
-			cyl.height = 1.6
+			var boulder := "res://assets/nature/%s.glb" % BOULDERS[index % BOULDERS.size()]
+			box = _footprint(boulder, BOULDER_HEIGHT)
 			if not Net.is_dedicated():
-				var boulder := "res://assets/nature/%s.glb" % BOULDERS[index % BOULDERS.size()]
-				_visual.add_child(Models.standing(boulder, 1.7))
+				_visual.add_child(Models.standing(boulder, BOULDER_HEIGHT))
 		"iron":
-			radius = 0.9
-			cyl.height = 2.4
+			var crag := "res://assets/nature/%s.glb" % TALL_ROCKS[index % TALL_ROCKS.size()]
+			box = _footprint(crag, CRAG_HEIGHT)
 			if not Net.is_dedicated():
-				var crag := "res://assets/nature/%s.glb" % TALL_ROCKS[index % TALL_ROCKS.size()]
-				var rock := Models.standing(crag, 2.6)
+				var rock := Models.standing(crag, CRAG_HEIGHT)
 				_visual.add_child(rock)
 				# Rusty ore veins.
 				for k in 3:
@@ -78,9 +77,17 @@ func _ready() -> void:
 				light.omni_range = 5.0
 				light.position.y = 1.2
 				_visual.add_child(light)
-	cyl.radius = radius
-	_shape.shape = cyl
-	_shape.position.y = cyl.height * 0.5
+	if box != Vector3.ZERO:
+		# Rocks collide with a box the size of the model, so nobody walks into them.
+		var shape := BoxShape3D.new()
+		shape.size = box
+		_shape.shape = shape
+		_shape.position.y = box.y * 0.5
+		radius = 0.5 * maxf(box.x, box.z)
+	else:
+		cyl.radius = radius
+		_shape.shape = cyl
+		_shape.position.y = cyl.height * 0.5
 	add_child(_shape)
 	# Draw distance: rocks fade out far away, small details and glows sooner.
 	for n in _visual.find_children("*", "GeometryInstance3D", true, false):
@@ -137,6 +144,21 @@ static func is_oak(i: int) -> bool:
 const PINES := ["tree_pineTallA", "tree_pineTallB", "tree_pineTallC", "tree_pineTallD",
 	"tree_pineTallA_detailed", "tree_pineTallC_detailed"]
 const BROADLEAF := ["tree_oak", "tree_default", "tree_detailed", "tree_fat", "tree_tall"]
+const BOULDER_HEIGHT := 1.7
+const CRAG_HEIGHT := 2.6
+
+
+## Collision box for a rock model standing `height` tall: its footprint, a little inside
+## the bumpy outline. Measured from the model file, so server and clients agree.
+static func _footprint(path: String, height: float) -> Vector3:
+	var m := Models.info(path)
+	if m.is_empty():
+		return Vector3(2.0, height, 2.0)
+	var a: AABB = m["aabb"]
+	var k := height / maxf(a.size.y, 0.001)
+	return Vector3(a.size.x * k * 0.88, height * 0.95, a.size.z * k * 0.88)
+
+
 const BOULDERS := ["stone_largeA", "stone_largeB", "stone_largeC", "stone_largeD", "stone_largeE", "stone_largeF"]
 const TALL_ROCKS := ["stone_tallA", "stone_tallB", "stone_tallC", "stone_tallD", "stone_tallE", "stone_tallF"]
 const STUMP := "res://assets/nature/stump_round.glb"

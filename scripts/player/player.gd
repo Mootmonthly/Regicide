@@ -689,6 +689,12 @@ func _swing(push: bool, spell := false) -> void:
 		else:
 			vm.tween_property(_vm_hand, "rotation:x", -1.5, 0.08)
 			vm.tween_property(_vm_hand, "rotation:x", VM_HAND_ROT.x, 0.2)
+			if _vm_weapon and equipped in CharacterVisual.HELD_UPRIGHT:
+				# Turn the wrist so the edge leads the strike, then back to show the blade.
+				var wrist := create_tween()
+				wrist.tween_property(_vm_weapon, "rotation:y", deg_to_rad(CharacterVisual.FP_EDGE_SPIN), 0.05)
+				wrist.tween_interval(0.05)
+				wrist.tween_property(_vm_weapon, "rotation:y", 0.0, 0.2)
 
 
 # --- Feedback ----------------------------------------------------------------------
@@ -818,7 +824,7 @@ func _build_camera() -> void:
 	_pivot.position = Vector3(0, EYE_HEIGHT + (MOUNTED_EYE_LIFT if mounted else 0.0), 0)
 	add_child(_pivot)
 	_arm = SpringArm3D.new()
-	_arm.collision_mask = 1 | 4
+	_arm.collision_mask = 1 | 4 | 8  # terrain, structures, rocks and trees
 	_arm.add_excluded_object(get_rid())
 	_pivot.add_child(_arm)
 	_camera = Camera3D.new()

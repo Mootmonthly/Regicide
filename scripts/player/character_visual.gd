@@ -14,12 +14,17 @@ const LOOPING := ["Idle_A", "Idle_B", "Walking_A", "Walking_B", "Running_A", "Ru
 	"Melee_Unarmed_Idle", "Running_HoldingBow", "Walking_Backwards"]
 ## Items carried upright in the right hand (see ArmHold).
 const HELD_UPRIGHT := ["iron_sword", "stone_axe", "pickaxe", "wooden_club", "war_hammer"]
-const SWORD_SWINGS := ["Melee_1H_Attack_Slice_Diagonal", "Melee_1H_Attack_Slice_Horizontal", "Melee_1H_Attack_Chop"]
+## (The horizontal slice is left out: it turns the wrist so the flat of the blade leads.)
+const SWORD_SWINGS := ["Melee_1H_Attack_Slice_Diagonal", "Melee_1H_Attack_Chop"]
 
 ## How each item is held. KayKit models are made for the hand slot as they are; other
 ## models stand upright (+Y) with the grip a little above their bottom. "fp_base" then
 ## "fp" (degrees) are the extra rotation that makes the item look right in first person,
 ## where +Y is up and -Z is straight ahead.
+## First person: at rest a blade shows its face to the camera; the swing pitches the
+## hand forward, so the wrist turns the item this far about its handle as it swings, and
+## the edge (the axe's cutting side) leads instead of the flat.
+const FP_EDGE_SPIN := -90.0
 const HELD := {
 	"iron_sword": {"kaykit": "sword_1handed"},
 	"stone_axe": {"kaykit": "axe_1handed"},
@@ -456,6 +461,7 @@ static func make_held(item_id: String, p_team: int, first_person := false) -> No
 	if first_person and spec.has("fp"):
 		var euler: Vector3 = spec["fp"]
 		root.basis = Basis.from_euler(euler * PI / 180.0) * (spec.get("fp_base", Basis()) as Basis)
+
 	if spec.has("kaykit"):
 		var node := (load("res://assets/kaykit/items/%s.gltf" % spec["kaykit"]) as PackedScene).instantiate() as Node3D
 		node.scale = Vector3.ONE * unit_scale()

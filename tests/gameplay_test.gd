@@ -29,6 +29,8 @@ func _ready() -> void:
 	await _frames(5)
 	await _run()
 	await _run_hotbar_and_respec()
+	await _run_weapon_edges()
+	await _run_rock_collision()
 	print("gameplay: %d checks, %d failures" % [_checks, _failures])
 	get_tree().quit(1 if _failures > 0 else 0)
 
@@ -1002,6 +1004,72 @@ func _run() -> void:
 	gm._reset_match()
 	await _frames(2)
 	check(not gm.overtime and not gm.match_over, "reset ends overtime")
+
+
+## Melee weapons must hit with the edge (or the axe's cutting side), not the flat, in
+## the first-person swing (the hand pitches forward about its X axis).
+func _run_weapon_edges() -> void:
+	for w: String in CharacterVisual.HELD_UPRIGHT:
+		var hand := Node3D.new()
+		add_child(hand)
+		hand.rotation = Vector3(-0.1, -0.5, 0.25)
+		var held := CharacterVisual.make_held(w, 0, true)
+		hand.add_child(held)
+		await get_tree().process_frame
+		var box := AABB()
+		var first := true
+		for mi in held.find_children("*", "MeshInstance3D", true, false):
+			var m := mi as MeshInstance3D
+			var a: AABB = (held.global_transform.affine_inverse() * m.global_transform) * m.get_aabb()
+			box = a if first else box.merge(a)
+			first = false
+		var thin := Vector3.RIGHT if box.size.x <= box.size.z else Vector3.BACK
+		var c := box.get_center()
+		var head := Vector3(c.x, 0, c.z)
+		head -= head.dot(thin) * thin
+		var flat := 0.0
+		var edge := 0.0
+		var total := 0.0
+		var prev := Vector3.INF
+		held.rotation.y = deg_to_rad(CharacterVisual.FP_EDGE_SPIN)  # the wrist turn in Player._swing
+		for i in 11:
+			hand.rotation.x = lerpf(-0.1, -1.5, i / 10.0)
+			var xf := held.global_transform
+			var tip := xf * Vector3(0, box.end.y * 0.8, 0)
+			if prev != Vector3.INF:
+				var vel := tip - prev
+				flat += absf(vel.dot((xf.basis * thin).normalized()))
+				if head.length() > 0.05:
+					edge += vel.dot((xf.basis * head).normalized())
+				total += vel.length()
+			prev = tip
+		check(flat / total < 0.2, "%s: first-person swing leads with the edge, not the flat (%.2f)" % [w, flat / total])
+		if w == "stone_axe":
+			check(edge / total > 0.5, "the axe's cutting side faces the swing")
+		hand.queue_free()
+
+
+## Rocks block you at their visible edge, so you can't walk (or look) inside them.
+func _run_rock_collision() -> void:
+	var rock: ResourceNode = null
+	for n: ResourceNode in world.resource_nodes:
+		if is_instance_valid(n) and n.res_type == "stone" and n.is_inside_tree():
+			rock = n
+			break
+	check(rock != null, "found a boulder")
+	if rock == null:
+		return
+	var box: Vector3 = (rock._shape.shape as BoxShape3D).size if rock._shape.shape is BoxShape3D else Vector3.ZERO
+	check(box.x > 2.5 or box.z > 2.5, "boulders collide with a box the size of the model (%s)" % box)
+	var center := rock.global_position
+	var walker := _make_walker(0, center + Vector3(0, 0.5, rock.radius + 3.0))
+	walker.rotation.y = 0.0  # facing -Z, straight at the rock
+	walker.move_input = Vector2(0, -1)
+	await _frames(120)
+	walker.move_input = Vector2.ZERO
+	var gap := GameData.flat_distance(walker.position, center)
+	check(gap < rock.radius + 2.5, "the walker reached the boulder (%.2f m from its centre)" % gap)
+	check(gap > 0.4 * minf(box.x, box.z), "walking into a boulder stops at its side (%.2f m from its centre)" % gap)
 
 
 func _run_hotbar_and_respec() -> void:
