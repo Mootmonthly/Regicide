@@ -11,6 +11,11 @@ jobs:
       GODOT_VERSION: 4.4.1
     steps:
       - uses: actions/checkout@v4
+      - name: Server setup script is plain ASCII
+        # DigitalOcean silently skips cloud-init user data with non-ASCII characters.
+        run: |
+          if grep -nP '[^\x00-\x7F]' server/cloud-init.yaml; then echo "::error::server/cloud-init.yaml must be plain ASCII"; exit 1; fi
+          python3 -c "import yaml; yaml.safe_load(open('server/cloud-init.yaml'))"
       - name: Download Godot
         run: |
           curl -sSL -o godot.zip "https://github.com/godotengine/godot/releases/download/${GODOT_VERSION}-stable/Godot_v${GODOT_VERSION}-stable_linux.x86_64.zip"

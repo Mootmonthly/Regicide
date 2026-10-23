@@ -1,10 +1,10 @@
 #cloud-config
 # Paste this into "User data" / "Cloud config" when creating an Ubuntu or Debian VPS
-# (Hetzner, DigitalOcean, Vultr, Linode, AWS…). The server installs itself on first boot
+# (Hetzner, DigitalOcean, Vultr, Linode, AWS...). The server installs itself on first boot
 # and runs the latest Regicide release on UDP port 24565.
 # Setup log on the server: /var/log/regicide-setup.log
-# It turns on the server's own firewall (ufw). Don't also attach a provider firewall
-# or monitoring agent at creation time: on DigitalOcean that stopped this setup from running.
+# It turns on the server's own firewall (ufw) with SSH and the game port open.
+# Keep this file plain ASCII: DigitalOcean skips user data with other characters.
 runcmd:
   - |
     exec >>/var/log/regicide-setup.log 2>&1
