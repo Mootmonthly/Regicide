@@ -35,11 +35,12 @@ jobs:
           ADDRESS: ${{ inputs.address }}
           PORT: ${{ inputs.port }}
         run: |
-          timeout 60 ./Regicide.x86_64 --headless --quit-after 2700 -- --join "$ADDRESS" --port "$PORT" --name ServerCheck > client.log 2>&1 || true
+          timeout 75 ./Regicide.x86_64 --headless -- --join "$ADDRESS" --port "$PORT" --name ServerCheck > client.log 2>&1 || true
           cat client.log
           if grep -qE "\[net\] (Could not|Lost connection|Wrong server password|.*version)" client.log; then
             echo "::error::Could not join the server (see the log above)"; exit 1
           fi
           if grep -q "\[net\] Joined the server" client.log; then echo "Joined the server."; exit 0; fi
-          # Builds before v0.3 don't log the join; staying connected for the whole run means it worked.
+          # Builds before v0.3 do not log the join. A failed connection reports within 30 s, so
+          # 75 s with no error means it connected.
           echo "Stayed connected for the whole check with no errors."
