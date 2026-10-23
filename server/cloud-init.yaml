@@ -2,9 +2,12 @@
 # Paste this into "User data" / "Cloud config" when creating an Ubuntu or Debian VPS
 # (Hetzner, DigitalOcean, Vultr, Linode, AWS…). The server installs itself on first boot
 # and runs the latest Regicide release on UDP port 24565.
-package_update: true
-packages: [curl, ca-certificates]
+# Setup log on the server: /var/log/regicide-setup.log
 runcmd:
-  - curl -fsSL -o /root/regicide-server.tar.gz https://github.com/Mootmonthly/Regicide/releases/latest/download/Regicide-server-linux.tar.gz
-  - tar -xzf /root/regicide-server.tar.gz -C /root
-  - /root/regicide-server/install.sh
+  - |
+    exec >>/var/log/regicide-setup.log 2>&1
+    set -x
+    URL=https://github.com/Mootmonthly/Regicide/releases/latest/download/Regicide-server-linux.tar.gz
+    for i in 1 2 3 4 5 6; do curl -fsSL --retry 3 -o /root/regicide-server.tar.gz "$URL" && break; sleep 10; done
+    tar -xzf /root/regicide-server.tar.gz -C /root
+    bash /root/regicide-server/install.sh
