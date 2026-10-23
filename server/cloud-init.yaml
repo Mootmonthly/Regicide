@@ -3,6 +3,8 @@
 # (Hetzner, DigitalOcean, Vultr, Linode, AWS…). The server installs itself on first boot
 # and runs the latest Regicide release on UDP port 24565.
 # Setup log on the server: /var/log/regicide-setup.log
+# It turns on the server's own firewall (ufw). Don't also attach a provider firewall
+# or monitoring agent at creation time: on DigitalOcean that stopped this setup from running.
 runcmd:
   - |
     exec >>/var/log/regicide-setup.log 2>&1
@@ -10,4 +12,6 @@ runcmd:
     URL=https://github.com/Mootmonthly/Regicide/releases/latest/download/Regicide-server-linux.tar.gz
     for i in 1 2 3 4 5 6; do curl -fsSL --retry 3 -o /root/regicide-server.tar.gz "$URL" && break; sleep 10; done
     tar -xzf /root/regicide-server.tar.gz -C /root
+    # Firewall: SSH and the game port only (install.sh opens the game port).
+    if command -v ufw >/dev/null; then ufw allow 22/tcp; ufw --force enable; fi
     bash /root/regicide-server/install.sh

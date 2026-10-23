@@ -13,7 +13,9 @@ address** = the server's IP, then **Join**.
    contents of [`server/cloud-init.yaml`](../server/cloud-init.yaml).
 4. Create it. A couple of minutes later the Regicide server is running. Players join with
    the server's public IP shown in the provider's dashboard.
-5. If the provider has a firewall for the server, allow inbound **UDP 24565**.
+5. The script turns on the server's own firewall (ufw) with SSH and UDP 24565 open.
+   Don't attach a provider firewall or monitoring when creating it: on DigitalOcean
+   that stopped the setup from running.
 
 To change settings later, SSH in and edit `/opt/regicide/server.cfg` (see below).
 
