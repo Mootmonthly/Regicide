@@ -29,6 +29,7 @@ func _ready() -> void:
 	Net.mode = Net.Mode.DEDICATED
 	Net.port = 27500 + randi() % 1000
 	Net.team_fill = bots
+	Net.min_players = 0  # bots only: no lobby
 	world = load("res://scenes/world.tscn").instantiate()
 	add_child(world)
 	gm = world.game_mode

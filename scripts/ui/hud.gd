@@ -434,7 +434,7 @@ func _process(_delta: float) -> void:
 	var s := _game_mode.scores
 	_score.text = "%s  %d  —  %d  %s" % [GameData.team_name(0), s[0], s[1], GameData.team_name(1)]
 	_clock.text = _clock_text()
-	_clock.modulate = Color(1.0, 0.75, 0.3) if _game_mode.overtime or (_game_mode.time_left < 60.0 and not _game_mode.match_over) else Color.WHITE
+	_clock.modulate = Color(0.6, 0.9, 1.0) if _game_mode.lobby else (Color(1.0, 0.75, 0.3) if _game_mode.overtime or (_game_mode.time_left < 60.0 and not _game_mode.match_over) else Color.WHITE)
 	var crown_lines: PackedStringArray = []
 	for c in _game_mode.crowns:
 		crown_lines.append("%s crown: %s" % [GameData.team_name(c.team), _crown_status(c)])
@@ -757,6 +757,10 @@ func _add_message(text: String) -> void:
 func _clock_text() -> String:
 	if _game_mode.match_over:
 		return ""
+	if _game_mode.lobby:
+		if _game_mode.lobby_countdown >= 0.0:
+			return "WARM-UP · match starts in %d" % ceili(_game_mode.lobby_countdown)
+		return "WARM-UP · waiting for players (%d/%d)" % [_game_mode.lobby_players, _game_mode.lobby_needed]
 	if _game_mode.overtime:
 		return "OVERTIME · next capture wins"
 	var t := ceili(_game_mode.time_left)

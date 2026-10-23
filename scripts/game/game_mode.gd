@@ -38,6 +38,12 @@ var _clock_sync_timer := 0.0
 const CLOCK_SYNC_INTERVAL := 5.0
 ## Rows of [name, team, kills, deaths, captures, is_bot].
 var scoreboard: Array = []
+## Pre-match lobby (dedicated servers): warm-up until enough players join, then a
+## countdown. lobby_countdown < 0 means still waiting for players.
+var lobby := false
+var lobby_countdown := -1.0
+var lobby_players := 0
+var lobby_needed := 0
 
 # --- This client's private state (copied from the server) ---------------------
 var my_inventory: Dictionary = {}
@@ -57,6 +63,8 @@ var _bot_name_index := 0
 var _scoreboard_dirty := true
 var _scoreboard_timer := 0.0
 var _collapse_pending := false
+var _lobby_sync_timer := 0.0
+var _lobby_announced := -1
 
 
 func _ready() -> void:
@@ -121,6 +129,8 @@ func server_start() -> void:
 	if not Net.is_dedicated():
 		_register(1, Net.player_name)
 	_balance_bots()
+	if uses_lobby():
+		_enter_lobby(false)
 
 
 func _on_connected_to_server() -> void:
@@ -281,7 +291,10 @@ func _remove_player(peer: int) -> void:
 	# A dedicated server that empties out starts over, so the next group gets a fresh match.
 	if Net.is_dedicated() and peer > 0 and _human_count() == 0 and server_running:
 		print("[server] Everyone left; resetting the match.")
-		_reset_match.call_deferred()
+		if uses_lobby():
+			_enter_lobby.call_deferred()
+		else:
+			_reset_match.call_deferred()
 
 
 func _on_peer_disconnected(peer: int) -> void:
@@ -303,6 +316,7 @@ func _snapshot() -> Dictionary:
 		"time_left": time_left,
 		"overtime": overtime,
 		"pieces": world.piece_states(),
+		"lobby": [lobby, lobby_countdown, lobby_players, lobby_needed],
 	}
 
 
@@ -342,6 +356,8 @@ func _welcome(seed_value: int, snapshot: Dictionary) -> void:
 	winner = snapshot["winner"]
 	time_left = float(snapshot.get("time_left", GameData.MATCH_TIME_LIMIT))
 	overtime = bool(snapshot.get("overtime", false))
+	var l: Array = snapshot.get("lobby", [false, -1.0, 0, 0])
+	_lobby_state(l[0], l[1], l[2], l[3])
 	scores_updated.emit()
 	match_over_changed.emit()
 
@@ -391,6 +407,14 @@ func _hit_marker(killed: bool) -> void:
 func _match_clock(seconds_left: float, is_overtime: bool) -> void:
 	time_left = seconds_left
 	overtime = is_overtime
+
+
+@rpc("authority", "call_local", "reliable")
+func _lobby_state(in_lobby: bool, countdown: float, players: int, needed: int) -> void:
+	lobby = in_lobby
+	lobby_countdown = countdown
+	lobby_players = players
+	lobby_needed = needed
 
 
 @rpc("authority", "call_local", "reliable")
@@ -1817,9 +1841,12 @@ func _physics_process(delta: float) -> void:
 			_status_log_timer = 300.0
 			var t := ceili(time_left)
 			print("[status] %d players + %d bots · score %d–%d · %s" % [_human_count(), records.size() - _human_count(),
-				scores[0], scores[1], "overtime" if overtime else "%d:%02d left" % [t / 60, t % 60]])
+				scores[0], scores[1], "lobby" if lobby else ("overtime" if overtime else "%d:%02d left" % [t / 60, t % 60])])
 	if not server_running:
-		if not match_over and not overtime:
+		if lobby:
+			if lobby_countdown > 0.0:
+				lobby_countdown = maxf(0.0, lobby_countdown - delta)
+		elif not match_over and not overtime:
 			time_left = maxf(0.0, time_left - delta)  # count down between server updates
 		return
 	_scoreboard_timer -= delta
@@ -1832,6 +1859,11 @@ func _physics_process(delta: float) -> void:
 		_collapse_unsupported()
 	if match_over:
 		return
+	if lobby:
+		_tick_lobby(delta)
+		_check_movement()
+		_tick_status(delta)
+		return  # warm-up: no clock, and the crowns stay put
 	_tick_match_clock(delta)
 	if match_over:
 		return
@@ -2053,10 +2085,72 @@ func _end_match(winning_team: int) -> void:
 	var gen := _generation
 	get_tree().create_timer(GameData.MATCH_RESTART_DELAY, false, true).timeout.connect(func() -> void:
 		if gen == _generation:
-			_reset_match())
+			if uses_lobby():
+				_enter_lobby()
+			else:
+				_reset_match())
 
 
-func _reset_match() -> void:
+## Dedicated servers hold a warm-up lobby between matches when min_players is set.
+func uses_lobby() -> bool:
+	return Net.is_dedicated() and Net.min_players > 0
+
+
+## Back to the warm-up lobby: a fresh map to roam while players gather.
+func _enter_lobby(reset := true) -> void:
+	if reset:
+		_reset_match(false)
+	lobby = true
+	lobby_countdown = -1.0
+	_lobby_announced = -1
+	_lobby_sync_timer = 0.0
+	_update_lobby(true)
+	print("[server] In the lobby: waiting for %d player%s." % [Net.min_players, "" if Net.min_players == 1 else "s"])
+
+
+func _tick_lobby(delta: float) -> void:
+	match_started_at = clock  # the match clock (and bots' timing) start when the lobby ends
+	time_left = GameData.MATCH_TIME_LIMIT
+	var humans := _human_count()
+	var changed := humans != lobby_players
+	if humans >= Net.min_players:
+		if lobby_countdown < 0.0:
+			lobby_countdown = Net.lobby_countdown
+			changed = true
+			_announce("Enough players! The match starts in %d seconds. (Warm-up: everything resets at the start.)" % ceili(lobby_countdown))
+		lobby_countdown -= delta
+		var whole := ceili(lobby_countdown)
+		if whole != _lobby_announced and whole in [30, 10, 5, 4, 3, 2, 1]:
+			_lobby_announced = whole
+			_announce("Match starts in %d..." % whole)
+		if lobby_countdown <= 0.0:
+			_start_from_lobby()
+			return
+	elif lobby_countdown >= 0.0:
+		lobby_countdown = -1.0
+		changed = true
+		_announce("Not enough players: waiting for %d more." % (Net.min_players - humans))
+	_update_lobby(changed, delta)
+
+
+func _update_lobby(force: bool, delta := 0.0) -> void:
+	_lobby_sync_timer -= delta
+	if force or _lobby_sync_timer <= 0.0:
+		_lobby_sync_timer = 1.0
+		lobby_players = _human_count()
+		lobby_needed = Net.min_players
+		_broadcast(&"_lobby_state", [lobby, lobby_countdown, lobby_players, lobby_needed])
+
+
+func _start_from_lobby() -> void:
+	lobby = false
+	lobby_countdown = -1.0
+	_update_lobby(true)
+	print("[server] Lobby countdown done; starting the match with %d players." % _human_count())
+	_reset_match()
+
+
+func _reset_match(announce := true) -> void:
 	_generation += 1
 	match_started_at = clock
 	overtime = false
@@ -2095,4 +2189,5 @@ func _reset_match() -> void:
 	_broadcast(&"_scores", [scores])
 	_sync_crowns()
 	_broadcast(&"_match_state", [false, -1])
-	_announce("A new match begins!")
+	if announce:
+		_announce("A new match begins!")

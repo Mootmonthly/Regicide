@@ -23,6 +23,10 @@ var password := ""
 ## Server settings (dedicated servers read them from server.cfg).
 var server_name := "Regicide server"
 var motd := ""
+## Dedicated servers: humans needed before a match starts (0 = start right away), and
+## the countdown once they are here.
+var min_players := 2
+var lobby_countdown := 60.0
 var max_players := MAX_PEERS
 var _config_path := ""
 ## Settings given as command-line flags; these win over server.cfg.
@@ -106,6 +110,8 @@ func load_server_config() -> void:
 		cfg.set_value("server", "port", port)
 		cfg.set_value("server", "password", password)
 		cfg.set_value("server", "max_players", max_players)
+		cfg.set_value("server", "min_players", min_players)
+		cfg.set_value("server", "lobby_countdown", lobby_countdown)
 		cfg.set_value("server", "bots_per_team", team_fill)
 		cfg.set_value("server", "motd", "Welcome! Steal their crown, defend your own.")
 		if cfg.save(path) == OK:
@@ -117,6 +123,8 @@ func load_server_config() -> void:
 	if not _cli_flags.has("password"):
 		password = str(cfg.get_value("server", "password", ""))
 	max_players = clampi(int(cfg.get_value("server", "max_players", max_players)), 1, MAX_PEERS)
+	min_players = clampi(int(cfg.get_value("server", "min_players", min_players)), 0, MAX_PEERS)
+	lobby_countdown = clampf(float(cfg.get_value("server", "lobby_countdown", lobby_countdown)), 0.0, 600.0)
 	if not _cli_flags.has("bots"):
 		team_fill = clampi(int(cfg.get_value("server", "bots_per_team", team_fill)), 0, GameData.TEAM_SIZE)
 	motd = str(cfg.get_value("server", "motd", ""))

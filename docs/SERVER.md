@@ -100,6 +100,8 @@ Players connect over **UDP 24565** (or whatever `port` you set).
 | `port` | `24565` | UDP port |
 | `password` | empty | Set one to make the server private; players type it on the main menu |
 | `max_players` | `100` | Most human players at once (two teams of 50 = 100) |
+| `min_players` | `2` | Players needed before a match starts; until then it's a warm-up lobby. `0` = no lobby |
+| `lobby_countdown` | `60` | Seconds of countdown once enough players are on |
 | `bots_per_team` | `0` | Test bots that fill empty slots (0 for real matches) |
 
 Restart the server after changing anything. Command-line flags (`--port`, `--password`,
@@ -107,9 +109,12 @@ Restart the server after changing anything. Command-line flags (`--port`, `--pas
 
 ## How the server behaves
 
+- The server waits in a **warm-up lobby** until `min_players` people are on: you can roam,
+  gather and fight, but the clock doesn't run and crowns can't be taken. Then a countdown
+  starts (it stops again if players leave), and the match begins on a fresh map.
 - Matches run on their own: first to the capture limit, or most crowns after 30 minutes
-  (ties go to overtime). A new match starts automatically.
-- When the last player leaves, the map resets so the next arrivals start fresh.
+  (ties go to overtime). Afterwards the server goes back to the lobby.
+- When the last player leaves, the server resets and waits in the lobby again.
 - Every 5 minutes the log prints a status line (players, score, time left).
 
 ## Updating
