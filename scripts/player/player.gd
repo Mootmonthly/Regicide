@@ -516,6 +516,13 @@ func _unhandled_input(event: InputEvent) -> void:
 		if event.is_action_pressed("upgrade") and aimed_piece:
 			_game_mode.request(&"request_upgrade", [String(aimed_piece.name)])
 			return
+	if build_page == 0 and event.is_action_pressed("hide_slot") and equipped != "":
+		var hid := equipped
+		_game_mode.set_hidden_on_hotbar(hid, true)
+		_game_mode.message_received.emit("%s removed from your hotbar. Put it back from the menu (%s)." % [
+			GameData.display_name(hid), Settings.binding_text("toggle_menu")])
+		select_slot(mini(hotbar_index, _game_mode.hotbar_items(0).size() - 1))
+		return
 	for i in 10:
 		if event.is_action_pressed("hotbar_%d" % (i + 1)):
 			select_slot(i)

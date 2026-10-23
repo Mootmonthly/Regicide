@@ -68,6 +68,7 @@ func _ready() -> void:
 		["Rotate / repair / upgrade a piece", "%s / %s / %s" % [Settings.binding_text("rotate_piece"), Settings.binding_text("repair"), Settings.binding_text("upgrade")]],
 		["Drawbridge, catapult", Settings.binding_text("interact")],
 		["Crafting, spells & skills", Settings.binding_text("toggle_menu")],
+		["Take the selected item or spell off the hotbar", Settings.binding_text("hide_slot")],
 		["Dash (once you've learned the skill)", Settings.binding_text("dash")],
 		["Talk nearby / to your team (hold)", "%s / %s" % [Settings.binding_text("voice_proximity"), Settings.binding_text("voice_team")]],
 		["First / third person", Settings.binding_text("camera_toggle")],

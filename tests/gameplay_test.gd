@@ -28,6 +28,7 @@ func _ready() -> void:
 	gm = world.game_mode
 	await _frames(5)
 	await _run()
+	await _run_hotbar_and_respec()
 	print("gameplay: %d checks, %d failures" % [_checks, _failures])
 	get_tree().quit(1 if _failures > 0 else 0)
 
@@ -122,6 +123,11 @@ func _run() -> void:
 	gm.request_craft("wood_wall")
 	check(rec.inventory.count("wood_wall") == 0, "building pieces aren't crafted")
 	check(gm.hotbar_items().has("iron_sword"), "sword shows in hotbar")
+	gm.set_hidden_on_hotbar("iron_sword", true)
+	check(not gm.hotbar_items().has("iron_sword") and rec.inventory.count("iron_sword") == 1,
+		"an item taken off the hotbar is still owned")
+	gm.set_hidden_on_hotbar("iron_sword", false)
+	check(gm.hotbar_items().has("iron_sword"), "and can be put back")
 
 	# --- Combat & gold ---
 	gm.records[ENEMY] = PlayerRecord.new(ENEMY, "Enemy", 1)
@@ -437,6 +443,23 @@ func _run() -> void:
 	for i in 60:
 		await get_tree().physics_frame
 	check(enemy.health < before, "spike trap hurts enemies standing on it")
+
+	# Ballistas need a clear line to their target: walls block their bolts.
+	rec.unlocks["ballista"] = true
+	rec.inventory.add("wood", 40)
+	rec.inventory.add("iron", 10)
+	_place(me, Vector3(50, 0, -4), Vector3(56, 0, -8))
+	await _frames(2)
+	_ready_to_act(1)
+	check(gm.perform_build(1, "ballista", S.make_slot(14, -2, 0)), "ballista built")
+	var ballista: Structure = world.pieces[S.key("free", S.make_slot(14, -2, 0))]
+	enemy.teleport(Vector3(56, 0, 2))
+	await _frames(3)
+	check(gm.turret_target(ballista, 32.0) == enemy, "ballista targets an enemy in the open")
+	_ready_to_act(1)
+	check(gm.perform_build(1, "wood_wall", S.make_slot(14, -2, 0, 0)), "wall between ballista and enemy")
+	await _frames(3)
+	check(gm.turret_target(ballista, 32.0) == null, "ballista can't shoot through a wall")
 
 	# --- Spells & mana ---
 	gm._respawn(ENEMY)
@@ -979,3 +1002,22 @@ func _run() -> void:
 	gm._reset_match()
 	await _frames(2)
 	check(not gm.overtime and not gm.match_over, "reset ends overtime")
+
+
+func _run_hotbar_and_respec() -> void:
+	var rec: PlayerRecord = gm.records[1]
+	var me := world.get_player(1)
+	rec.skill_points += 6
+	gm.perform_skill(1, "iron_will")
+	gm.perform_skill(1, "iron_will")
+	gm.perform_skill(1, "dash")
+	var ranks := 0
+	for skill: String in rec.skills:
+		for r in int(rec.skills[skill]):
+			ranks += GameData.skill_cost(r)
+	check(ranks > 0, "has skills to reset")
+	var points_before := rec.skill_points
+	check(gm.perform_reset_skills(1), "reset skills")
+	check(rec.skills.is_empty() and rec.skill_points == points_before + ranks, "resetting refunds every point")
+	check(is_equal_approx(me.max_health, rec.max_health()) and me.health <= me.max_health, "health follows the reset")
+	check(not gm.perform_reset_skills(1), "nothing to reset twice")

@@ -16,6 +16,7 @@ const KEYS := {
 	"repair": [KEY_F],
 	"upgrade": [KEY_G],
 	"dash": [KEY_X],
+	"hide_slot": [KEY_H],
 	"camera_toggle": [KEY_V],
 	"voice_proximity": [KEY_T],
 	"voice_team": [KEY_Y],

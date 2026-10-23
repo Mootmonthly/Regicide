@@ -14,7 +14,7 @@ const REBINDABLE := [
 	["move_right", "Move right"], ["jump", "Jump"], ["sprint", "Sprint"], ["dash", "Dash (skill)"],
 	["primary", "Use / attack / cast"], ["block", "Block with shield"], ["interact", "Use drawbridge / catapult"],
 	["build_mode", "Build mode"], ["rotate_piece", "Rotate piece"], ["repair", "Repair"], ["upgrade", "Upgrade to stone"],
-	["toggle_menu", "Crafting, spells & skills"], ["scoreboard", "Scoreboard"], ["camera_toggle", "First / third person"],
+	["toggle_menu", "Crafting, spells & skills"], ["hide_slot", "Remove item from hotbar"], ["scoreboard", "Scoreboard"], ["camera_toggle", "First / third person"],
 	["voice_proximity", "Talk to players nearby"], ["voice_team", "Talk to your team"],
 ]
 
@@ -22,7 +22,7 @@ const DEFAULTS := {
 	"controls": {"sensitivity": 1.0, "invert_y": false, "fov": 80.0},
 	"audio": {"master": 0.8, "effects": 1.0, "voice": 1.0},
 	"graphics": {"quality": 2, "render_scale": 1.0, "fullscreen": false, "vsync": true, "fps_cap": 0},
-	"general": {"seen_help": false, "name": "", "address": "127.0.0.1", "port": 24565},
+	"general": {"seen_help": false, "name": "", "address": "127.0.0.1", "port": 24565, "hidden_hotbar": []},
 }
 
 ## Section -> key -> value, starting from DEFAULTS.

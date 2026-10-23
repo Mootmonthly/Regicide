@@ -680,12 +680,37 @@ func _rebuild_menu() -> void:
 				Sfx.play("click")
 				_game_mode.request(&"request_unlock", [id]))
 		row.add_child(button)
+		var on_bar_kind := kind == "spell" or not kind in ["ammo", "structure", "shield"]
+		var owned := _game_mode.my_unlocks.has(id) if kind == "spell" else int(_game_mode.my_inventory.get(id, 0)) > 0
+		if on_bar_kind and owned:
+			var shown := not _game_mode.is_hidden_on_hotbar(id)
+			var toggle := Button.new()
+			toggle.custom_minimum_size = Vector2(130, 0)
+			toggle.text = "On hotbar ✓" if shown else "Add to hotbar"
+			toggle.tooltip_text = "Click to take it off your hotbar (you keep it). You can also press %s on the hotbar." % Settings.binding_text("hide_slot") \
+				if shown else "Put it back on your hotbar."
+			toggle.pressed.connect(func() -> void:
+				Sfx.play("click")
+				_game_mode.set_hidden_on_hotbar(id, shown))
+			row.add_child(toggle)
 
 
 ## Skills: spend points earned from kills (1) and captures (3). Rank n costs n points.
 func _add_skill_rows() -> void:
 	var points := int(_game_mode.my_stats.get("skill_points", 0))
-	_menu_list.add_child(_label("Skills — %d point%s to spend (kills give 1, captures 3)" % [points, "" if points == 1 else "s"], 20))
+	var head := HBoxContainer.new()
+	_menu_list.add_child(head)
+	var title := _label("Skills — %d point%s to spend (kills give 1, captures 3)" % [points, "" if points == 1 else "s"], 20)
+	title.size_flags_horizontal = Control.SIZE_EXPAND_FILL
+	head.add_child(title)
+	var reset := Button.new()
+	reset.text = "Reset skills"
+	reset.tooltip_text = "Take back all your skill ranks and get the points back to spend differently."
+	reset.disabled = (_game_mode.my_stats.get("skills", {}) as Dictionary).is_empty()
+	reset.pressed.connect(func() -> void:
+		Sfx.play("click")
+		_game_mode.request(&"request_reset_skills", []))
+	head.add_child(reset)
 	for skill: String in GameData.SKILLS:
 		var def: Dictionary = GameData.SKILLS[skill]
 		var rank := _skill_rank(skill)

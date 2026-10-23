@@ -417,7 +417,32 @@ func _apply_crowns(data: Array) -> void:
 ## items. Pages 1+ are build mode: the unlocked building pieces of that category
 ## (paid for when placed).
 func hotbar_items(build_page := 0) -> Array[String]:
-	return hotbar_for(my_inventory, my_unlocks, build_page)
+	var bar := hotbar_for(my_inventory, my_unlocks, build_page)
+	if build_page > 0:
+		return bar
+	var hidden: Array = Settings.get_value("general", "hidden_hotbar")
+	if hidden.is_empty():
+		return bar
+	var out: Array[String] = []
+	for id in bar:
+		if not hidden.has(id):
+			out.append(id)
+	return out
+
+
+## This player's choice to keep an item or spell off their hotbar (it stays owned).
+## Saved with their settings so it carries over to the next match.
+func is_hidden_on_hotbar(id: String) -> bool:
+	return (Settings.get_value("general", "hidden_hotbar") as Array).has(id)
+
+
+func set_hidden_on_hotbar(id: String, hidden: bool) -> void:
+	var list: Array = (Settings.get_value("general", "hidden_hotbar") as Array).duplicate()
+	list.erase(id)
+	if hidden:
+		list.append(id)
+	Settings.set_value("general", "hidden_hotbar", list)
+	private_updated.emit()
 
 
 static func hotbar_for(inventory: Dictionary, unlocks: Array, build_page := 0) -> Array[String]:
@@ -718,6 +743,34 @@ func perform_skill(peer: int, skill: String) -> bool:
 			p.health += gained
 		p.max_mana = rec.max_mana()
 	_tell(peer, "%s is now rank %d." % [GameData.SKILLS[skill]["name"], now + 1])
+	_push_private(peer)
+	return true
+
+
+## Take back every skill rank and refund the points, to spend them differently.
+@rpc("any_peer", "call_local", "reliable")
+func request_reset_skills() -> void:
+	if server_running:
+		perform_reset_skills(_sender())
+
+
+func perform_reset_skills(peer: int) -> bool:
+	var rec: PlayerRecord = records.get(peer)
+	if rec == null or rec.skills.is_empty():
+		return false
+	var refund := 0
+	for skill: String in rec.skills:
+		for r in int(rec.skills[skill]):
+			refund += GameData.skill_cost(r)
+	rec.skills.clear()
+	rec.skill_points += refund
+	var p := world.get_player(peer)
+	if p:
+		p.max_health = rec.max_health()
+		p.health = minf(p.health, p.max_health)
+		p.max_mana = rec.max_mana()
+		p.mana = minf(p.mana, p.max_mana)
+	_tell(peer, "Skills reset: %d point%s back to spend." % [refund, "" if refund == 1 else "s"])
 	_push_private(peer)
 	return true
 
@@ -1564,6 +1617,33 @@ func nearest_enemy(pos: Vector3, team: int, max_range: float) -> Player:
 			best = p
 			best_d = d
 	return best
+
+
+## Server: the closest enemy a turret can actually see: walls, gates, terrain and trees
+## between it and the target block the shot.
+func turret_target(s: Structure, max_range: float) -> Player:
+	var from := s.top() + Vector3(0, 0.3, 0)
+	var candidates: Array = []
+	for p in world.get_players():
+		if p.team == s.team or not p.alive or p.cloaked:
+			continue
+		var d := from.distance_to(p.sync_pos)
+		if d <= max_range:
+			candidates.append([d, p])
+	if candidates.is_empty():
+		return null
+	candidates.sort_custom(func(a: Array, b: Array) -> bool: return a[0] < b[0])
+	var space := s.get_world_3d().direct_space_state
+	var query := PhysicsRayQueryParameters3D.new()
+	query.collision_mask = 1 | 4 | 8 | GameData.gate_layer(0) | GameData.gate_layer(1)
+	query.exclude = [s.get_rid()]
+	query.from = from
+	for i in mini(candidates.size(), 6):
+		var p: Player = candidates[i][1]
+		query.to = p.sync_pos + Vector3(0, 1.0, 0)
+		if space.intersect_ray(query).is_empty():
+			return p
+	return null
 
 
 func fire_turret(s: Structure, target: Player, turret: Dictionary) -> void:

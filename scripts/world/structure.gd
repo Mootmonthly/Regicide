@@ -416,7 +416,7 @@ func _physics_process(delta: float) -> void:
 		_cooldown = _trap["interval"]
 		_game_mode.trigger_trap(self, _trap)
 		return
-	var target := _game_mode.nearest_enemy(global_position, team, _turret["range"])
+	var target := _game_mode.turret_target(self, _turret["range"])
 	if target == null:
 		_cooldown = 0.25
 		return
