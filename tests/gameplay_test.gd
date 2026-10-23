@@ -1007,6 +1007,14 @@ func _run() -> void:
 func _run_hotbar_and_respec() -> void:
 	var rec: PlayerRecord = gm.records[1]
 	var me := world.get_player(1)
+	# Performance: each knight is drawn as a single merged mesh.
+	var shown := 0
+	for mi in me._look.find_children("*", "MeshInstance3D", true, false):
+		if (mi as MeshInstance3D).visible and (mi as MeshInstance3D).skin:
+			shown += 1
+	check(shown == 1, "the knight is one merged mesh (%d skinned meshes)" % shown)
+	check(me._look.anim.callback_mode_process == AnimationMixer.ANIMATION_CALLBACK_MODE_PROCESS_MANUAL,
+		"knight animation is advanced by the level-of-detail code")
 	rec.skill_points += 6
 	gm.perform_skill(1, "iron_will")
 	gm.perform_skill(1, "iron_will")

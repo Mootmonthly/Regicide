@@ -82,6 +82,14 @@ func _ready() -> void:
 	_shape.shape = cyl
 	_shape.position.y = cyl.height * 0.5
 	add_child(_shape)
+	# Draw distance: rocks fade out far away, small details and glows sooner.
+	for n in _visual.find_children("*", "GeometryInstance3D", true, false):
+		(n as GeometryInstance3D).visibility_range_end = 220.0
+	for n in _visual.find_children("*", "Light3D", true, false):
+		var light := n as Light3D
+		light.distance_fade_enabled = true
+		light.distance_fade_begin = 45.0
+		light.distance_fade_length = 15.0
 	set_amount(amount)
 
 

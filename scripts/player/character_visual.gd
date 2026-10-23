@@ -40,6 +40,16 @@ const HOLD_POSE := "Holding_A"
 
 static var _library: AnimationLibrary
 static var _team_materials: Dictionary = {}  ## (team, tinted steel) -> recoloured material
+static var _merged: Array = []  ## [ArrayMesh, Skin]: the knight's parts as one mesh, built once
+
+## Level of detail by distance from the camera. Far characters animate less often, stop
+## casting shadows and hide what they hold; off-screen ones animate rarely.
+const LOD_FULL := 22.0  ## closer than this: animate every frame
+const LOD_STEPS := [[45.0, 1.0 / 30.0], [90.0, 1.0 / 15.0], [INF, 1.0 / 8.0]]
+const OFFSCREEN_STEP := 1.0 / 5.0
+const SHADOW_RANGE := 40.0
+const HELD_RANGE := 70.0
+const DRAW_RANGE := 220.0
 
 var anim: AnimationPlayer
 var right_hand: Node3D  ## held item goes here (meters, KayKit hand-slot orientation)
@@ -52,6 +62,10 @@ var _one_shot_until := 0.0
 var _current := ""
 var _swing := 0
 var _hold: ArmHold
+var _anim_wait := 0.0  ## time since the animation last advanced
+var _lod_check := 0.0
+var _anim_step := 0.0
+var _casting := true
 
 
 ## Poses the right arm like the Holding_A animation (weapon upright in front of the
@@ -86,7 +100,9 @@ func setup(_peer_id: int, p_team: int) -> void:
 	_model = _instantiate()
 	add_child(_model)
 	anim = _model.find_child("AnimationPlayer", true, false) as AnimationPlayer
+	anim.callback_mode_process = AnimationMixer.ANIMATION_CALLBACK_MODE_PROCESS_MANUAL
 	anim.play("Idle_A")
+	_lod_check = randf() * 0.25  # spread the checks over frames
 	for mi in _model.find_children("*", "MeshInstance3D", true, false):
 		_meshes.append(mi as MeshInstance3D)
 	var skeleton := _model.find_child("Skeleton3D", true, false) as Skeleton3D
@@ -94,6 +110,7 @@ func setup(_peer_id: int, p_team: int) -> void:
 	skeleton.add_child(_hold)
 	_hold.setup(skeleton, animation_library().get_animation(HOLD_POSE))
 	_hold.influence = 0.0
+	_hold.active = false
 	right_hand = _attach(skeleton, "handslot.r")
 	left_hand = _attach(skeleton, "handslot.l")
 
@@ -106,12 +123,149 @@ func _instantiate() -> Node3D:
 	var visor := node.find_child("Knight_HelmetVisor", true, false) as Node3D
 	if visor:
 		visor.visible = false
+	if not Net.is_dedicated():
+		_merge_parts(node)
 	apply_team_colors(node, team)
 	var ap := AnimationPlayer.new()
 	ap.name = "AnimationPlayer"
 	node.add_child(ap)
 	ap.add_animation_library("", animation_library())
 	return node
+
+
+func _process(delta: float) -> void:
+	if anim == null:
+		return
+	_lod_check -= delta
+	if _lod_check <= 0.0:
+		_lod_check = 0.25
+		_update_lod()
+	_anim_wait += delta
+	if _anim_wait >= _anim_step:
+		anim.advance(_anim_wait)
+		_anim_wait = 0.0
+
+
+func _update_lod() -> void:
+	var cam := get_viewport().get_camera_3d() if is_inside_tree() else null
+	if cam == null:
+		_anim_step = 0.0
+		return
+	var at := global_position + Vector3(0, 1.0, 0)
+	var dist := cam.global_position.distance_to(at)
+	if dist < LOD_FULL:
+		_anim_step = 0.0
+	elif not cam.is_position_in_frustum(at):
+		_anim_step = OFFSCREEN_STEP
+	else:
+		for step: Array in LOD_STEPS:
+			if dist < step[0]:
+				_anim_step = step[1]
+				break
+	var cast := dist < SHADOW_RANGE
+	if cast != _casting:
+		_casting = cast
+		for mi in _meshes:
+			mi.cast_shadow = GeometryInstance3D.SHADOW_CASTING_SETTING_ON if cast else GeometryInstance3D.SHADOW_CASTING_SETTING_OFF
+	var near := dist < HELD_RANGE
+	if right_hand and right_hand.visible != near:
+		right_hand.visible = near
+		left_hand.visible = near
+
+
+## Replace the knight's separate body-part meshes with one mesh (one draw call instead
+## of eight). The merged mesh and its skin are built once and shared.
+static func _merge_parts(node: Node3D) -> void:
+	var parts: Array[MeshInstance3D] = []
+	for n in node.find_children("*", "MeshInstance3D", true, false):
+		var mi := n as MeshInstance3D
+		if mi.visible and mi.mesh and mi.skin:
+			parts.append(mi)
+	if parts.size() < 2:
+		return
+	if _merged.is_empty():
+		_merged = _build_merged(parts)
+		if _merged.is_empty():
+			_merged = [null]
+	if _merged[0] == null:
+		return  # parts didn't line up; keep them separate
+	var first := parts[0]
+	var merged := MeshInstance3D.new()
+	merged.name = "KnightMerged"
+	merged.mesh = _merged[0]
+	merged.skin = _merged[1]
+	first.get_parent().add_child(merged)
+	merged.transform = first.transform
+	merged.skeleton = merged.get_path_to(first.get_node(first.skeleton))
+	merged.visibility_range_end = DRAW_RANGE
+	for mi in parts:
+		mi.get_parent().remove_child(mi)
+		mi.free()
+
+
+static func _build_merged(parts: Array[MeshInstance3D]) -> Array:
+	var skin := Skin.new()
+	var bind_index := {}  ## "bone|pose" -> merged bind index
+	var out := []
+	out.resize(Mesh.ARRAY_MAX)
+	var keys: Array[int] = []
+	var flags := 0
+	var material: Material = null
+	var base := 0
+	for mi in parts:
+		var mesh := mi.mesh
+		if mesh.get_surface_count() != 1 or not mi.transform.is_equal_approx(parts[0].transform):
+			return []
+		var arrays := mesh.surface_get_arrays(0)
+		var surf_flags: int = mesh.surface_get_format(0) & Mesh.ARRAY_FLAG_USE_8_BONE_WEIGHTS
+		if keys.is_empty():
+			flags = surf_flags
+			material = mesh.surface_get_material(0)
+			for k in Mesh.ARRAY_MAX:
+				if arrays[k] != null:
+					keys.append(k)
+		elif surf_flags != flags:
+			return []
+		for k in Mesh.ARRAY_MAX:
+			if (arrays[k] != null) != keys.has(k):
+				return []
+		# Bone indices point at this part's skin binds: remap them to the merged skin.
+		var remap := PackedInt32Array()
+		for b in mi.skin.get_bind_count():
+			var bone := mi.skin.get_bind_bone(b)
+			var bname := mi.skin.get_bind_name(b)
+			var pose := mi.skin.get_bind_pose(b)
+			var key := "%d|%s|%s" % [bone, bname, var_to_str(pose)]
+			if not bind_index.has(key):
+				bind_index[key] = skin.get_bind_count()
+				if bname != &"":
+					skin.add_named_bind(bname, pose)
+				else:
+					skin.add_bind(bone, pose)
+			remap.append(bind_index[key])
+		var bones: PackedInt32Array = arrays[Mesh.ARRAY_BONES]
+		for i in bones.size():
+			bones[i] = remap[bones[i]] if bones[i] < remap.size() else 0
+		arrays[Mesh.ARRAY_BONES] = bones
+		var vcount: int = (arrays[Mesh.ARRAY_VERTEX] as PackedVector3Array).size()
+		if arrays[Mesh.ARRAY_INDEX] != null:
+			var idx: PackedInt32Array = arrays[Mesh.ARRAY_INDEX]
+			for i in idx.size():
+				idx[i] += base
+			arrays[Mesh.ARRAY_INDEX] = idx
+		for k in keys:
+			if out[k] == null:
+				out[k] = arrays[k]
+			else:
+				out[k].append_array(arrays[k])
+		base += vcount
+	# Build through ImporterMesh so distant knights get simplified versions (LODs), like
+	# the imported parts had.
+	var importer := ImporterMesh.new()
+	importer.add_surface(Mesh.PRIMITIVE_TRIANGLES, out, [], {}, material, "", flags)
+	importer.generate_lods(25.0, 60.0, [])
+	var mesh := importer.get_mesh()
+	return [mesh, skin]
 
 
 ## A node riding on a bone, in meters and in the bone's orientation.
@@ -196,6 +350,7 @@ func update_motion(horizontal_speed: float, vertical_speed: float, on_ground: bo
 	if _hold:
 		var hold := not acting and not blocking and held_item in HELD_UPRIGHT
 		_hold.influence = move_toward(_hold.influence, 1.0 if hold else 0.0, get_process_delta_time() * 6.0)
+		_hold.active = _hold.influence > 0.0
 	if acting:
 		return
 	var bow := held_item == "shortbow"
@@ -232,6 +387,7 @@ func play_action(kind: String) -> void:
 	anim.speed_scale = speed
 	if _hold:
 		_hold.influence = 0.0
+		_hold.active = false
 	anim.play(name, 0.05)
 	anim.seek(0.0, true)
 	_current = name

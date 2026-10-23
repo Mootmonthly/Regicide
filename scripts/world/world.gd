@@ -316,23 +316,46 @@ func _build_forest() -> void:
 			_add_instance(groups, part[0], base * (part[1] as Transform3D), [n.index, true])
 	for mesh: Mesh in groups:
 		var g: Dictionary = groups[mesh]
-		var mm := MultiMesh.new()
-		mm.transform_format = MultiMesh.TRANSFORM_3D
-		mm.mesh = mesh
-		mm.instance_count = g["xfs"].size()
-		for i in mm.instance_count:
-			var xf: Transform3D = g["xfs"][i]
-			var owner: Array = g["owners"][i]
-			var stump: bool = owner[1]
-			var table := _stump_instances if stump else _tree_instances
-			if not table.has(owner[0]):
-				table[owner[0]] = []
-			table[owner[0]].append([mm, i, xf])
-			mm.set_instance_transform(i, _hidden(xf) if stump else xf)
-		var mmi := MultiMeshInstance3D.new()
-		mmi.multimesh = mm
-		resources_root.add_child(mmi)
+		var tiles := _tile(g["xfs"], TREE_TILE)
+		for key: Vector2i in tiles:
+			var picks: Array = tiles[key]
+			var mm := MultiMesh.new()
+			mm.transform_format = MultiMesh.TRANSFORM_3D
+			mm.mesh = mesh
+			mm.instance_count = picks.size()
+			for i in picks.size():
+				var xf: Transform3D = g["xfs"][picks[i]]
+				var owner: Array = g["owners"][picks[i]]
+				var stump: bool = owner[1]
+				var table := _stump_instances if stump else _tree_instances
+				if not table.has(owner[0]):
+					table[owner[0]] = []
+				table[owner[0]].append([mm, i, xf])
+				mm.set_instance_transform(i, _hidden(xf) if stump else xf)
+			var mmi := MultiMeshInstance3D.new()
+			mmi.multimesh = mm
+			mmi.visibility_range_end = TREE_RANGE
+			resources_root.add_child(mmi)
 	_build_ground_cover()
+
+
+## Vegetation is batched per map tile, so tiles behind the camera or far away are skipped
+## and distant tiles use the models' simpler versions.
+const TREE_TILE := 64.0
+const TREE_RANGE := 320.0
+const COVER_TILE := 32.0
+
+
+## Indices of `xfs` grouped by the map tile their origin falls in.
+static func _tile(xfs: Array, size: float) -> Dictionary:
+	var tiles := {}
+	for i in xfs.size():
+		var o: Vector3 = (xfs[i] as Transform3D).origin
+		var key := Vector2i(floori(o.x / size), floori(o.z / size))
+		if not tiles.has(key):
+			tiles[key] = []
+		tiles[key].append(i)
+	return tiles
 
 
 func _add_instance(groups: Dictionary, mesh: Mesh, xf: Transform3D, owner: Array) -> void:
@@ -386,18 +409,21 @@ func _build_ground_cover() -> void:
 			groups[part[0]].append(base * (part[1] as Transform3D))
 	for mesh: Mesh in groups:
 		var xfs: Array = groups[mesh]
-		var mm := MultiMesh.new()
-		mm.transform_format = MultiMesh.TRANSFORM_3D
-		mm.mesh = mesh
-		mm.instance_count = xfs.size()
-		for i in xfs.size():
-			mm.set_instance_transform(i, xfs[i])
-		var mmi := MultiMeshInstance3D.new()
-		mmi.multimesh = mm
-		mmi.cast_shadow = GeometryInstance3D.SHADOW_CASTING_SETTING_OFF
-		mmi.visibility_range_end = 160.0
-		resources_root.add_child(mmi)
-		_ground_cover.append(mmi)
+		var tiles := _tile(xfs, COVER_TILE)
+		for key: Vector2i in tiles:
+			var picks: Array = tiles[key]
+			var mm := MultiMesh.new()
+			mm.transform_format = MultiMesh.TRANSFORM_3D
+			mm.mesh = mesh
+			mm.instance_count = picks.size()
+			for i in picks.size():
+				mm.set_instance_transform(i, xfs[picks[i]])
+			var mmi := MultiMeshInstance3D.new()
+			mmi.multimesh = mm
+			mmi.cast_shadow = GeometryInstance3D.SHADOW_CASTING_SETTING_OFF
+			mmi.visibility_range_end = 160.0
+			resources_root.add_child(mmi)
+			_ground_cover.append(mmi)
 	_apply_quality()
 
 

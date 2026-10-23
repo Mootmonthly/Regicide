@@ -9,22 +9,26 @@ var world: World
 var game_mode: GameMode
 var _terrain_tex: ImageTexture
 var _terrain_team := -1
+var _redraw_in := 0.0
+var _flip := 1.0
 
 
 func _ready() -> void:
 	mouse_filter = Control.MOUSE_FILTER_IGNORE
 
 
-func _process(_delta: float) -> void:
-	queue_redraw()
+## Redraw 15 times a second rather than every frame: with 100 players the map is costly.
+func _process(delta: float) -> void:
+	_redraw_in -= delta
+	if _redraw_in <= 0.0:
+		_redraw_in = 1.0 / 15.0
+		queue_redraw()
 
 
 func _to_map(p: Vector3) -> Vector2:
 	# Your own base is always at the bottom.
-	var me := world.local_player()
-	var flip := -1.0 if me and me.team == 1 else 1.0
-	var nx := (p.x * flip) / GameData.MAP_WIDTH + 0.5
-	var ny := (p.z * flip) / GameData.MAP_LENGTH + 0.5
+	var nx := (p.x * _flip) / GameData.MAP_WIDTH + 0.5
+	var ny := (p.z * _flip) / GameData.MAP_LENGTH + 0.5
 	return Vector2(nx * size.x, ny * size.y)
 
 
@@ -54,6 +58,7 @@ func _draw() -> void:
 	draw_rect(Rect2(Vector2.ZERO, size), Color(0.15, 0.25, 0.12, 0.8))
 	var me := world.local_player()
 	var my_team := me.team if me else 0
+	_flip = -1.0 if my_team == 1 else 1.0
 	if world.terrain_ready and (_terrain_tex == null or _terrain_team != my_team):
 		_terrain_tex = _render_terrain(my_team)
 		_terrain_team = my_team
@@ -76,7 +81,7 @@ func _draw() -> void:
 		var visible_to_us := p.team == my_team or p.carrying_crown >= 0
 		if not visible_to_us and not p.cloaked:
 			for a in allies:
-				if a.sync_pos.distance_to(p.sync_pos) < SPOT_RANGE:
+				if a.sync_pos.distance_squared_to(p.sync_pos) < SPOT_RANGE * SPOT_RANGE:
 					visible_to_us = true
 					break
 		if visible_to_us:
