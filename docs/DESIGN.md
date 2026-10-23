@@ -84,8 +84,11 @@ Unlocks are per player and last until the match ends.
 - Owners touching their dropped crown return it instantly (+25g). Dropped crowns
   auto-return after 45 s.
 - **Capture:** carry the enemy crown to your own pedestal *while your own crown is home*.
-- First to **3** captures wins. Match resets after 15 s: scores, inventories, gold,
-  unlocks, structures and resources all reset.
+- First to **3** captures wins, with a **30-minute** limit: when time runs out the team
+  with more captures wins; a tie goes to **overtime**, where the next capture wins. The
+  time left shows under the score (amber in the last minute and in overtime).
+- Match resets after 15 s: scores, inventories, gold, unlocks, structures and
+  resources all reset.
 
 ## Economy
 

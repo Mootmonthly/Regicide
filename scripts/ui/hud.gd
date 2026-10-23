@@ -13,6 +13,7 @@ var _game_mode: GameMode
 var _label_settings: LabelSettings
 var _resources: Label
 var _score: Label
+var _clock: Label  ## time left in the match
 var _crowns: Label
 var _center: Label
 var _health: ProgressBar
@@ -86,11 +87,18 @@ func _build() -> void:
 	_score.offset_top = 8
 	root.add_child(_score)
 
+	_clock = _label("", 18)
+	_clock.set_anchors_and_offsets_preset(Control.PRESET_CENTER_TOP)
+	_clock.horizontal_alignment = HORIZONTAL_ALIGNMENT_CENTER
+	_clock.grow_horizontal = Control.GROW_DIRECTION_BOTH
+	_clock.offset_top = 42
+	root.add_child(_clock)
+
 	_crowns = _label("", 16)
 	_crowns.set_anchors_and_offsets_preset(Control.PRESET_CENTER_TOP)
 	_crowns.horizontal_alignment = HORIZONTAL_ALIGNMENT_CENTER
 	_crowns.grow_horizontal = Control.GROW_DIRECTION_BOTH
-	_crowns.offset_top = 44
+	_crowns.offset_top = 68
 	root.add_child(_crowns)
 
 	_vignette = ColorRect.new()
@@ -343,6 +351,8 @@ func _process(_delta: float) -> void:
 
 	var s := _game_mode.scores
 	_score.text = "%s  %d  —  %d  %s" % [GameData.team_name(0), s[0], s[1], GameData.team_name(1)]
+	_clock.text = _clock_text()
+	_clock.modulate = Color(1.0, 0.75, 0.3) if _game_mode.overtime or (_game_mode.time_left < 60.0 and not _game_mode.match_over) else Color.WHITE
 	var crown_lines: PackedStringArray = []
 	for c in _game_mode.crowns:
 		crown_lines.append("%s crown: %s" % [GameData.team_name(c.team), _crown_status(c)])
@@ -634,6 +644,16 @@ func _add_message(text: String) -> void:
 	t.tween_interval(FEED_SECONDS)
 	t.tween_property(l, "modulate:a", 0.0, 1.0)
 	t.tween_callback(l.queue_free)
+
+
+## "24:13" left in the match, or OVERTIME once time ran out with the scores tied.
+func _clock_text() -> String:
+	if _game_mode.match_over:
+		return ""
+	if _game_mode.overtime:
+		return "OVERTIME · next capture wins"
+	var t := ceili(_game_mode.time_left)
+	return "%d:%02d" % [t / 60, t % 60]
 
 
 func _on_match_over_changed() -> void:

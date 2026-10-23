@@ -96,7 +96,9 @@ The default port is **24565** (UDP). Open it on the host's router to play over t
   with distance, enemies included — or Y for your whole team.
 - **Steal the crown.** Touch the enemy crown to grab it. You move slower while carrying it,
   and drop it if you die. Bring it to your own pedestal **while your crown is home** to
-  score. First to 3 captures wins, then a fresh match starts.
+  score. First to 3 captures wins. Matches last at most 30 minutes: when time runs
+  out, the team with more captures wins, and a tie goes to overtime (next capture wins).
+  Then a fresh match starts.
 - **Bots are a testing tool.** Real matches are people. For solo testing, bots fill empty
   slots: they gather, craft, build wall rings, throw ladders on enemy walls, and attack.
 

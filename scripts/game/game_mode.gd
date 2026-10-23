@@ -30,6 +30,12 @@ var scores: Array = [0, 0]
 var crowns: Array[CrownState] = []
 var match_over := false
 var winner := -1
+## Seconds left in the match (the server's count; clients count down between updates).
+var time_left := GameData.MATCH_TIME_LIMIT
+## Time ran out with the scores tied: the next capture wins.
+var overtime := false
+var _clock_sync_timer := 0.0
+const CLOCK_SYNC_INTERVAL := 5.0
 ## Rows of [name, team, kills, deaths, captures, is_bot].
 var scoreboard: Array = []
 
@@ -257,6 +263,8 @@ func _snapshot() -> Dictionary:
 		"resources": world.resource_snapshot(),
 		"match_over": match_over,
 		"winner": winner,
+		"time_left": time_left,
+		"overtime": overtime,
 		"pieces": world.piece_states(),
 	}
 
@@ -293,6 +301,8 @@ func _welcome(seed_value: int, snapshot: Dictionary) -> void:
 	world.apply_piece_states(snapshot.get("pieces", {}))
 	match_over = snapshot["match_over"]
 	winner = snapshot["winner"]
+	time_left = float(snapshot.get("time_left", GameData.MATCH_TIME_LIMIT))
+	overtime = bool(snapshot.get("overtime", false))
 	scores_updated.emit()
 	match_over_changed.emit()
 
@@ -336,6 +346,12 @@ func _message(text: String) -> void:
 @rpc("authority", "call_local", "unreliable")
 func _hit_marker(killed: bool) -> void:
 	hit_confirmed.emit(killed)
+
+
+@rpc("authority", "call_local", "reliable")
+func _match_clock(seconds_left: float, is_overtime: bool) -> void:
+	time_left = seconds_left
+	overtime = is_overtime
 
 
 @rpc("authority", "call_local", "reliable")
@@ -1674,6 +1690,8 @@ func _fireball_blocked(point: Vector3, team: int) -> bool:
 func _physics_process(delta: float) -> void:
 	clock += delta
 	if not server_running:
+		if not match_over and not overtime:
+			time_left = maxf(0.0, time_left - delta)  # count down between server updates
 		return
 	_scoreboard_timer -= delta
 	if _scoreboard_dirty and _scoreboard_timer <= 0.0:
@@ -1683,6 +1701,9 @@ func _physics_process(delta: float) -> void:
 	if _collapse_pending:
 		_collapse_pending = false
 		_collapse_unsupported()
+	if match_over:
+		return
+	_tick_match_clock(delta)
 	if match_over:
 		return
 	_check_movement()
@@ -1701,6 +1722,25 @@ func _physics_process(delta: float) -> void:
 			_return_crown(crown, null)
 		else:
 			_check_crown_touch(crown)
+
+
+## The 30-minute limit: most captures wins when time runs out; a tie goes to overtime.
+func _tick_match_clock(delta: float) -> void:
+	if overtime:
+		return
+	time_left = maxf(0.0, GameData.MATCH_TIME_LIMIT - (clock - match_started_at))
+	_clock_sync_timer -= delta
+	if time_left <= 0.0:
+		if scores[0] != scores[1]:
+			_announce("Time's up!")
+			_end_match(0 if scores[0] > scores[1] else 1)
+		else:
+			overtime = true
+			_announce("Time's up with the scores tied. Overtime: the next capture wins!")
+		_broadcast(&"_match_clock", [time_left, overtime])
+	elif _clock_sync_timer <= 0.0:
+		_clock_sync_timer = CLOCK_SYNC_INTERVAL
+		_broadcast(&"_match_clock", [time_left, overtime])
 
 
 ## After a piece is destroyed, anything no longer connected to the ground falls down.
@@ -1859,7 +1899,7 @@ func _capture(carrier: Player, crown: CrownState) -> void:
 	_sync_crowns()
 	_broadcast(&"_scores", [scores])
 	_announce("%s captured the %s crown for the %s!" % [carrier.display_name, GameData.team_name(crown.team), GameData.team_name(team)])
-	if scores[team] >= GameData.CAPTURES_TO_WIN:
+	if scores[team] >= GameData.CAPTURES_TO_WIN or overtime:
 		_end_match(team)
 
 
@@ -1890,6 +1930,9 @@ func _end_match(winning_team: int) -> void:
 func _reset_match() -> void:
 	_generation += 1
 	match_started_at = clock
+	overtime = false
+	time_left = GameData.MATCH_TIME_LIMIT
+	_broadcast(&"_match_clock", [time_left, overtime])
 	scores = [0, 0]
 	for c in crowns:
 		c.send_home()

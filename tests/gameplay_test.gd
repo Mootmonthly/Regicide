@@ -921,5 +921,35 @@ func _run() -> void:
 	gm._reset_match()
 	await _frames(2)
 	check(not gm.match_over and gm.scores == [0, 0], "reset clears the match")
+	check(GameData.MATCH_TIME_LIMIT - gm.time_left < 1.0, "reset restarts the 30-minute clock")
 	check(rec.inventory.to_dict().is_empty() and rec.gold == 0, "reset clears progress")
 	check(tree.amount == tree.max_amount, "reset restores resources")
+
+	# --- Time limit ---
+	gm.match_started_at = gm.clock - (GameData.MATCH_TIME_LIMIT - 120.0)
+	await _frames(2)
+	check(absf(gm.time_left - 120.0) < 0.5, "the clock counts down (%.1f s left)" % gm.time_left)
+	gm.scores = [1, 0]
+	gm.match_started_at = gm.clock - GameData.MATCH_TIME_LIMIT
+	await _frames(2)
+	check(gm.match_over and gm.winner == 0, "when time runs out, the team with more captures wins")
+	gm._reset_match()
+	await _frames(2)
+	gm.scores = [1, 1]
+	gm.match_started_at = gm.clock - GameData.MATCH_TIME_LIMIT
+	await _frames(2)
+	check(not gm.match_over and gm.overtime, "a tie at the time limit goes to overtime")
+	gm.scores[1] = 1
+	var ot_crown: CrownState = gm.crowns[0]
+	ot_crown.state = CrownRules.State.CARRIED
+	ot_crown.carrier = ENEMY
+	enemy.carrying_crown = 0
+	gm._respawn(ENEMY)
+	enemy.alive = true
+	erec.protected_until = 0.0
+	gm._capture(enemy, ot_crown)
+	await _frames(2)
+	check(gm.match_over and gm.winner == 1, "in overtime the next capture wins")
+	gm._reset_match()
+	await _frames(2)
+	check(not gm.overtime and not gm.match_over, "reset ends overtime")

@@ -7,6 +7,9 @@ extends RefCounted
 const TEAM_COUNT := 2
 const TEAM_SIZE := 50
 const CAPTURES_TO_WIN := 3
+## Match length in seconds. When time runs out the team with more captures wins;
+## a tie goes to overtime, where the next capture wins.
+const MATCH_TIME_LIMIT := 1800.0
 const RESPAWN_TIME := 6.0
 const SPAWN_PROTECTION := 3.0
 const MATCH_RESTART_DELAY := 15.0
