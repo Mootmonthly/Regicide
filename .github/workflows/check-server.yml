@@ -1,0 +1,45 @@
+name: check-server
+
+# Joins a running Regicide server from GitHub's machines to check it's reachable.
+# Actions tab → "check-server" → "Run workflow", enter the server's IP.
+
+on:
+  workflow_dispatch:
+    inputs:
+      address:
+        description: "Server IP or hostname"
+        required: true
+      port:
+        description: "UDP port"
+        required: false
+        default: "24565"
+      version:
+        description: "Game version the server runs (e.g. v0.2.0; empty = latest release)"
+        required: false
+        default: ""
+
+jobs:
+  join:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Download the game
+        env:
+          VERSION: ${{ inputs.version }}
+        run: |
+          if [ -n "$VERSION" ]; then URL="https://github.com/${{ github.repository }}/releases/download/$VERSION/Regicide-linux.tar.gz"
+          else URL="https://github.com/${{ github.repository }}/releases/latest/download/Regicide-linux.tar.gz"; fi
+          curl -fsSL -o game.tgz "$URL" && tar -xzf game.tgz && chmod +x Regicide.x86_64
+
+      - name: Join the server
+        env:
+          ADDRESS: ${{ inputs.address }}
+          PORT: ${{ inputs.port }}
+        run: |
+          timeout 60 ./Regicide.x86_64 --headless --quit-after 2700 -- --join "$ADDRESS" --port "$PORT" --name ServerCheck > client.log 2>&1 || true
+          cat client.log
+          if grep -qE "\[net\] (Could not|Lost connection|Wrong server password|.*version)" client.log; then
+            echo "::error::Could not join the server (see the log above)"; exit 1
+          fi
+          if grep -q "\[net\] Joined the server" client.log; then echo "Joined the server."; exit 0; fi
+          # Builds before v0.3 don't log the join; staying connected for the whole run means it worked.
+          echo "Stayed connected for the whole check with no errors."

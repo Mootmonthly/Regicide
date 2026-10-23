@@ -331,6 +331,8 @@ func _teleport_player(peer: int, pos: Vector3) -> void:
 
 @rpc("authority", "call_local", "reliable")
 func _welcome(seed_value: int, snapshot: Dictionary) -> void:
+	if not multiplayer.is_server():
+		print("[net] Joined the server (map seed %d)" % seed_value)
 	world.generate(seed_value)
 	scores = snapshot["scores"]
 	_apply_crowns(snapshot["crowns"])
