@@ -211,6 +211,19 @@ func teleport(pos: Vector3) -> void:
 	velocity = Vector3.ZERO
 
 
+## Walking into a steep riverbank from the river climbs it, so nobody gets trapped in
+## the channel (the banks are too steep to walk up).
+func _scrambling_out() -> bool:
+	if not is_on_wall() or move_input.length() < 0.1 or position.y > Terrain.WATER_LEVEL + 2.5:
+		return false
+	var half := Terrain.river_width(position.x) * 0.5
+	if absf(position.z - Terrain.river_z(position.x)) > half + 3.0:
+		return false
+	var wall := get_wall_normal()
+	var dir := (transform.basis * Vector3(move_input.x, 0.0, move_input.y))
+	return Vector2(wall.x, wall.z).dot(Vector2(dir.x, dir.z)) < -0.2  # pushing into it
+
+
 func in_water() -> bool:
 	return position.y < Terrain.WATER_LEVEL - 0.35
 
@@ -435,6 +448,8 @@ func _owner_physics(delta: float) -> void:
 		velocity.y = -move_input.y * CLIMB_SPEED
 		if wants_jump:
 			velocity.y = JUMP_VELOCITY * 0.6
+	elif _scrambling_out():
+		velocity.y = CLIMB_SPEED * 0.8  # clamber up the riverbank
 	elif not is_on_floor():
 		velocity.y -= GRAVITY * delta
 	elif wants_jump:

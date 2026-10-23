@@ -10,6 +10,9 @@ var max_structures := 0
 var built := {}  ## item id -> pieces ever placed
 var _physics_us := 0
 var _frames := 0
+## peer -> seconds spent in the river without a break; the worst stretch per minute.
+var _wet := {}
+var _stuck_in_river := 0  ## bots that spent 30+ s in a row in the river this minute
 
 
 func _ready() -> void:
@@ -41,12 +44,18 @@ func _ready() -> void:
 		_physics_us += Time.get_ticks_usec() - t0
 		_frames += 1
 		max_structures = maxi(max_structures, world.get_structures().size())
+		if _frames % 30 == 0:
+			_track_river(0.5)
 		if gm.clock >= next_report:
 			next_report += 60.0
 			_report()
 	_report()
 	var ok: bool = stats["kills"] > 0 and stats["steals"] > 0
-	print("SOAK %s" % ("PASSED" if ok else "FAILED: bots never fought or never stole a crown"))
+	var why := "bots never fought or never stole a crown"
+	if ok and _stuck_in_river > 5:
+		ok = false
+		why = "%d times a bot spent 30+ s stuck in the river" % _stuck_in_river
+	print("SOAK %s" % ("PASSED" if ok else "FAILED: " + why))
 	get_tree().quit(0 if ok else 1)
 
 
@@ -63,6 +72,16 @@ func _on_message(text: String) -> void:
 		stats["wins"] += 1
 
 
+func _track_river(dt: float) -> void:
+	for p in world.get_players():
+		if p.alive and p.in_water():
+			_wet[p.peer_id] = float(_wet.get(p.peer_id, 0.0)) + dt
+			if is_equal_approx(_wet[p.peer_id], 30.0):
+				_stuck_in_river += 1
+		else:
+			_wet[p.peer_id] = 0.0
+
+
 func _report() -> void:
 	var items := {}
 	var gold := 0
@@ -77,3 +96,8 @@ func _report() -> void:
 		_physics_us / 1000.0 / maxi(_frames, 1)])
 	print("       items held: %s" % str(items))
 	print("       pieces built: %s" % str(built))
+	var wet_now := 0
+	for v: float in _wet.values():
+		if v > 0.0:
+			wet_now += 1
+	print("       in the river now: %d · stuck 30+ s in the river (total): %d" % [wet_now, _stuck_in_river])
